@@ -24,11 +24,17 @@ export interface ExtractionProgress {
   currentFile?: string
 }
 
+export interface DirectModelFile {
+  fileName: string
+  url: string
+}
+
 export interface LanguageConfig {
   code: string
   displayName: string
   fileName: string
   downloadUrl?: string
+  directFiles?: DirectModelFile[]
   size: number
   type: "transducer" | "ctc"
   requiredFiles: string[]
@@ -79,6 +85,33 @@ class STTModelManager {
       type: "transducer",
       requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
       languageCode: "es-ES",
+    },
+    it: {
+      code: "it",
+      displayName: "Italiano",
+      fileName: "kroko_64l_it_int8",
+      size: 154 * 1024 * 1024,
+      type: "transducer",
+      requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
+      languageCode: "it-IT",
+      directFiles: [
+        {
+          fileName: "encoder.int8.onnx",
+          url: "https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/it/kroko_64l/encoder.int8.onnx",
+        },
+        {
+          fileName: "decoder.int8.onnx",
+          url: "https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/it/kroko_64l/decoder.int8.onnx",
+        },
+        {
+          fileName: "joiner.int8.onnx",
+          url: "https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/it/kroko_64l/joiner.int8.onnx",
+        },
+        {
+          fileName: "tokens.txt",
+          url: "https://huggingface.co/hudaiapa88/sherpa-stt-onnx/resolve/main/it/kroko_64l/tokens.txt",
+        },
+      ],
     },
     zh: {
       code: "zh",
@@ -229,6 +262,69 @@ class STTModelManager {
     try {
       await RNFS.mkdir(modelDir, {NSURLIsExcludedFromBackupKey: true})
 
+      // Some community Sherpa models are published as individual ONNX files
+      // instead of a tar.bz2 archive. Keep the existing archive path untouched,
+      // but allow those models to be installed directly into the language folder.
+      if (language.directFiles?.length) {
+        await RNFS.mkdir(finalPath, {NSURLIsExcludedFromBackupKey: true})
+        let completedBytes = 0
+
+        for (const file of language.directFiles) {
+          const destination = `${finalPath}/${file.fileName}`
+          const result = RNFS.downloadFile({
+            fromUrl: file.url,
+            toFile: destination,
+            progress: (res: RNFS.DownloadProgressCallbackResultT) => {
+              const bytesWritten = completedBytes + res.bytesWritten
+              const contentLength = Math.max(language.size, bytesWritten)
+              const percentage = Math.min(99, Math.round((bytesWritten / contentLength) * 100))
+              onProgress?.({
+                jobId: res.jobId,
+                bytesWritten,
+                contentLength,
+                percentage,
+              })
+            },
+            progressDivider: 5,
+            begin: (res: RNFS.DownloadBeginCallbackResultT) => {
+              console.log(`Direct STT download started: ${file.fileName}`, res)
+            },
+            connectionTimeout: 30000,
+            readTimeout: 30000,
+          })
+
+          this.downloadJobId = result.jobId
+          const downloadResult = await result.promise
+          if (downloadResult.statusCode < 200 || downloadResult.statusCode >= 300) {
+            throw new Error(
+              `Download failed for ${file.fileName} with status code: ${downloadResult.statusCode}`,
+            )
+          }
+
+          const stat = await RNFS.stat(destination)
+          completedBytes += Number(stat.size)
+        }
+
+        this.downloadJobId = undefined
+        onProgress?.({
+          jobId: 0,
+          bytesWritten: completedBytes,
+          contentLength: completedBytes,
+          percentage: 100,
+        })
+        onExtractionProgress?.({percentage: 100})
+
+        const valid = await BluetoothSdk.validateSttModel(finalPath)
+        if (!valid) {
+          throw new Error(`Downloaded STT model failed validation: ${id}`)
+        }
+
+        if (id === this.currentLanguage) {
+          await this.setNativeModelPath(finalPath, language.languageCode)
+        }
+        return
+      }
+
       const downloadOptions = {
         fromUrl: modelUrl,
         toFile: tempPath,
@@ -249,7 +345,7 @@ class STTModelManager {
         readTimeout: 30000,
       }
 
-      const result = await RNFS.downloadFile(downloadOptions)
+      const result = RNFS.downloadFile(downloadOptions)
       this.downloadJobId = result.jobId
 
       const downloadResult = await result.promise
@@ -279,11 +375,14 @@ class STTModelManager {
       onExtractionProgress?.({percentage: 100})
 
       await RNFS.unlink(tempPath)
+      this.downloadJobId = undefined
 
       if (id === this.currentLanguage) {
         await this.setNativeModelPath(finalPath, language.languageCode)
       }
     } catch (error) {
+      this.downloadJobId = undefined
+
       // Best-effort cleanup; never let it mask the original error.
       try {
         if (await RNFS.exists(tempPath)) await RNFS.unlink(tempPath)
