@@ -420,6 +420,46 @@ class STTModelManager {
     }
   }
 
+  /** Import a user-supplied Sherpa .tar.bz2 model into the persistent custom slot. */
+  async importCustomArchive(sourcePath: string, languageCode = "it-IT"): Promise<void> {
+    const customDir = `${this.getModelDirectory()}/custom`
+    await RNFS.mkdir(this.getModelDirectory(), {NSURLIsExcludedFromBackupKey: true})
+    if (await RNFS.exists(customDir)) await RNFS.unlink(customDir)
+    await RNFS.mkdir(customDir, {NSURLIsExcludedFromBackupKey: true})
+
+    const extracted = await BluetoothSdk.extractTarBz2(sourcePath, customDir)
+    if (!extracted) throw new Error("Could not extract custom Sherpa model archive")
+
+    // Archives commonly contain one top-level model directory. Resolve it automatically.
+    let modelPath = customDir
+    if (!(await BluetoothSdk.validateSttModel(modelPath))) {
+      const entries = await RNFS.readDir(customDir)
+      const dirs = entries.filter((entry) => entry.isDirectory())
+      if (dirs.length === 1 && (await BluetoothSdk.validateSttModel(dirs[0].path))) modelPath = dirs[0].path
+    }
+
+    if (!(await BluetoothSdk.validateSttModel(modelPath))) {
+      await RNFS.unlink(customDir).catch(() => undefined)
+      throw new Error("Invalid Sherpa model. Expected tokens.txt plus encoder/decoder/joiner ONNX files, or model.onnx for CTC.")
+    }
+
+    await this.setNativeModelPath(modelPath, languageCode)
+    this.currentLanguage = "custom"
+  }
+
+  async activateCustomModel(languageCode = "it-IT"): Promise<void> {
+    const base = `${this.getModelDirectory()}/custom`
+    let modelPath = base
+    if (!(await BluetoothSdk.validateSttModel(modelPath))) {
+      const entries = (await RNFS.exists(base)) ? await RNFS.readDir(base) : []
+      const dirs = entries.filter((entry) => entry.isDirectory())
+      if (dirs.length === 1 && (await BluetoothSdk.validateSttModel(dirs[0].path))) modelPath = dirs[0].path
+    }
+    if (!(await BluetoothSdk.validateSttModel(modelPath))) throw new Error("No valid custom model is installed")
+    await this.setNativeModelPath(modelPath, languageCode)
+    this.currentLanguage = "custom"
+  }
+
   async cancelDownload(): Promise<void> {
     if (this.downloadJobId !== undefined) {
       await RNFS.stopDownload(this.downloadJobId)
