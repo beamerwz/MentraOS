@@ -1,4 +1,4 @@
-import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {G2LabsLogo} from "@/components/brands/G2LabsLogo"
 // import {useVideoPlayer, VideoView} from "expo-video"
 import {View} from "react-native"
 
@@ -18,7 +18,7 @@ export function SplashVideo({label}: {label?: string}) {
     <View className="flex-1 justify-center items-center bg-background">
       {/* Keep the logo perfectly centered; the label is absolutely positioned
           below it so showing/hiding the text never shifts the logo. */}
-      <MentraLogoStandalone width={100} height={53} />
+      <G2LabsLogo width={92} height={92} />
       {/* <VideoView player={player} style={{width: "50%", height: "50%"}} contentFit="contain" nativeControls={false} /> */}
       {label ? (
         <Text
