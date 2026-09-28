@@ -3,7 +3,7 @@ import {useRoute} from "@react-navigation/native"
 import {Image, Platform, ScrollView, View} from "react-native"
 import type {ImageStyle, ViewStyle} from "react-native"
 
-import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {G2LabsLogo} from "@/components/brands/G2LabsLogo"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -349,7 +349,7 @@ export default function PairingPrepScreen() {
         title={displayName}
         leftIcon="chevron-left"
         onLeftPress={goBack}
-        RightActionComponent={<MentraLogoStandalone />}
+        RightActionComponent={<G2LabsLogo width={34} height={34} />}
       />
       {renderGuide()}
       {renderButtons()}
