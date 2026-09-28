@@ -40,6 +40,7 @@ export interface LanguageConfig {
   requiredFiles: string[]
   languageCode: string
   archiveSha256?: string
+  experimental?: boolean
 }
 
 const DEFAULT_LANGUAGE = "en"
@@ -96,7 +97,6 @@ class STTModelManager {
       type: "transducer",
       requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
       languageCode: "it-IT",
-      archiveSha256: "fb170128c496db33a1fb9f5f9f823257f42f911224ee218bb429f3c2eaf90a8d",
       directFiles: [
         {
           fileName: "encoder.int8.onnx",
@@ -125,8 +125,8 @@ class STTModelManager {
       size: 682 * 1024 * 1024,
       type: "transducer",
       requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
-      languageCode: "it-IT",
-      archiveSha256: "a81909a1780d84cff16d73c15e13e67d9d81d8839faf14870d507d8499f7a61a",
+      languageCode: "it",
+      experimental: true,
     },
     nemotron_it_160: {
       code: "nemotron_it_160",
@@ -137,7 +137,8 @@ class STTModelManager {
       size: 682 * 1024 * 1024,
       type: "transducer",
       requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
-      languageCode: "it-IT",
+      languageCode: "it",
+      experimental: true,
     },
     zh: {
       code: "zh",
@@ -199,7 +200,9 @@ class STTModelManager {
   }
 
   getAvailableLanguages(): LanguageConfig[] {
-    return Object.values(this.languages)
+    // Experimental Model Lab entries are intentionally excluded from the normal
+    // Speech language picker. They remain addressable by code from G2 MODEL LAB.
+    return Object.values(this.languages).filter((language) => !language.experimental)
   }
 
   getModelDirectory(): string {
@@ -269,8 +272,8 @@ class STTModelManager {
 
   async getAllLanguageInfo(): Promise<LanguageInfo[]> {
     const infos: LanguageInfo[] = []
-    for (const code of Object.keys(this.languages)) {
-      infos.push(await this.getLanguageInfo(code))
+    for (const language of this.getAvailableLanguages()) {
+      infos.push(await this.getLanguageInfo(language.code))
     }
     return infos
   }
