@@ -259,6 +259,21 @@ class SherpaOnnxOnlineRecongitionResult {
     }
 }
 
+enum SherpaOnnxRecognizerError: LocalizedError {
+    case native(String)
+
+    var errorDescription: String? {
+        switch self {
+        case let .native(message): return message
+        }
+    }
+}
+
+private func sherpaNativeError(_ operation: String) -> SherpaOnnxRecognizerError {
+    let detail = String(cString: MentraSherpaLastError())
+    return .native(detail.isEmpty ? "\(operation) failed" : "\(operation): \(detail)")
+}
+
 class SherpaOnnxRecognizer {
     /// A pointer to the underlying counterpart in C
     private let recognizer: OpaquePointer
@@ -268,9 +283,16 @@ class SherpaOnnxRecognizer {
     /// Constructor taking a model config
     init(
         config: UnsafePointer<SherpaOnnxOnlineRecognizerConfig>
-    ) {
-        recognizer = SherpaOnnxCreateOnlineRecognizer(config)
-        stream = SherpaOnnxCreateOnlineStream(recognizer)
+    ) throws {
+        guard let recognizer = MentraSherpaCreateOnlineRecognizer(config) else {
+            throw sherpaNativeError("CreateOnlineRecognizer")
+        }
+        self.recognizer = recognizer
+        guard let stream = MentraSherpaCreateOnlineStream(recognizer) else {
+            SherpaOnnxDestroyOnlineRecognizer(recognizer)
+            throw sherpaNativeError("CreateOnlineStream")
+        }
+        self.stream = stream
     }
 
     deinit {
@@ -284,28 +306,37 @@ class SherpaOnnxRecognizer {
     ///   - samples: Audio samples normalized to the range [-1, 1]
     ///   - sampleRate: Sample rate of the input audio samples. Must match
     ///                 the one expected by the model.
-    func acceptWaveform(samples: [Float], sampleRate: Int = 16000) {
-        SherpaOnnxOnlineStreamAcceptWaveform(stream, Int32(sampleRate), samples, Int32(samples.count))
+    func acceptWaveform(samples: [Float], sampleRate: Int = 16000) throws {
+        if MentraSherpaOnlineStreamAcceptWaveform(stream, Int32(sampleRate), samples, Int32(samples.count)) == 0 {
+            throw sherpaNativeError("OnlineStreamAcceptWaveform")
+        }
     }
 
-    func isReady() -> Bool {
-        return SherpaOnnxIsOnlineStreamReady(recognizer, stream) != 0
+    func isReady() throws -> Bool {
+        var ready: Int32 = 0
+        if MentraSherpaIsOnlineStreamReady(recognizer, stream, &ready) == 0 {
+            throw sherpaNativeError("IsOnlineStreamReady")
+        }
+        return ready != 0
     }
 
     /// Set a per-stream model option before feeding audio. Nemotron 3.5 multilingual
     /// uses this to select the transcription locale (for example, it-IT).
-    func setOption(key: String, value: String) {
-        key.withCString { keyPtr in
+    func setOption(key: String, value: String) throws {
+        let succeeded = key.withCString { keyPtr in
             value.withCString { valuePtr in
-                SherpaOnnxOnlineStreamSetOption(stream, keyPtr, valuePtr)
+                MentraSherpaOnlineStreamSetOption(stream, keyPtr, valuePtr)
             }
         }
+        if succeeded == 0 { throw sherpaNativeError("OnlineStreamSetOption") }
     }
 
     /// If there are enough number of feature frames, it invokes the neural
     /// network computation and decoding. Otherwise, it is a no-op.
-    func decode() {
-        SherpaOnnxDecodeOnlineStream(recognizer, stream)
+    func decode() throws {
+        if MentraSherpaDecodeOnlineStream(recognizer, stream) == 0 {
+            throw sherpaNativeError("DecodeOnlineStream")
+        }
     }
 
     /// Get the decoding results so far
@@ -321,9 +352,11 @@ class SherpaOnnxRecognizer {
     /// If hotwords is an empty string, it just recreates the decoding stream
     /// If hotwords is not empty, it will create a new decoding stream with
     /// the given hotWords appended to the default hotwords.
-    func reset(hotwords: String? = nil) {
+    func reset(hotwords: String? = nil) throws {
         guard let words = hotwords, !words.isEmpty else {
-            SherpaOnnxOnlineStreamReset(recognizer, stream)
+            if MentraSherpaOnlineStreamReset(recognizer, stream) == 0 {
+                throw sherpaNativeError("OnlineStreamReset")
+            }
             return
         }
 
@@ -337,6 +370,30 @@ class SherpaOnnxRecognizer {
             stream = newStream
             lock.unlock()
         }
+    }
+
+    /// Executes the first encoder/decoder pass before a model can be persisted.
+    func smokeTest(sampleRate: Int = 16000) throws {
+        try acceptWaveform(samples: [Float](repeating: 0, count: sampleRate / 2), sampleRate: sampleRate)
+        var decodeCount = 0
+        while try isReady() {
+            try decode()
+            decodeCount += 1
+        }
+        if decodeCount == 0 {
+            throw SherpaOnnxRecognizerError.native("Smoke test did not reach the encoder")
+        }
+        try reset()
+    }
+
+    func recreateStream() throws {
+        guard let newStream = MentraSherpaCreateOnlineStream(recognizer) else {
+            throw sherpaNativeError("CreateOnlineStream")
+        }
+        lock.lock()
+        SherpaOnnxDestroyOnlineStream(stream)
+        stream = newStream
+        lock.unlock()
     }
 
     /// Signal that no more audio samples would be available.

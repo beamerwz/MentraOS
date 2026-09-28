@@ -699,6 +699,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             STTTools.setSttModelDetails(path, languageCode)
         }
 
+        AsyncFunction("activateSttModel") { (path: String, languageCode: String) -> Bool in
+            return await MainActor.run {
+                DeviceManager.shared.activateSttModel(path: path, languageCode: languageCode)
+            }
+        }
+
         AsyncFunction("getSttModelPath") { () -> String in
             return STTTools.getSttModelPath()
         }

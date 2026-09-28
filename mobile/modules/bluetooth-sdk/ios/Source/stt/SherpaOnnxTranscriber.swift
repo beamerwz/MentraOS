@@ -32,7 +32,7 @@ class SherpaOnnxTranscriber {
 
     /// Dynamic model path support
     private static var customModelPath: String? {
-        guard let storedPath = UserDefaults.standard.string(forKey: "STTModelPath") else {
+        guard let storedPath = STTTools.modelPathForRecognizer() else {
             return nil
         }
 
@@ -81,7 +81,8 @@ class SherpaOnnxTranscriber {
      * Initialize the Sherpa-ONNX recognizer.
      * Loads models and configuration, sets up processing thread.
      */
-    func initialize() {
+    @discardableResult
+    func initialize() -> Bool {
         do {
             var tokensPath: String
             var modelType = "unknown"
@@ -138,7 +139,7 @@ class SherpaOnnxTranscriber {
                     )
 
                     // Create recognizer with the wrapper
-                    recognizer = SherpaOnnxRecognizer(config: &config)
+                    recognizer = try SherpaOnnxRecognizer(config: &config)
 
                 } else if let transducerEncoderPath {
                     // Transducer model detected
@@ -190,7 +191,7 @@ class SherpaOnnxTranscriber {
                     )
 
                     // Create recognizer with the wrapper
-                    recognizer = SherpaOnnxRecognizer(config: &config)
+                    recognizer = try SherpaOnnxRecognizer(config: &config)
 
                 } else {
                     throw NSError(domain: "SherpaOnnxTranscriber", code: 1, userInfo: [
@@ -202,7 +203,7 @@ class SherpaOnnxTranscriber {
                 Bridge.log("Please download a model using the model downloader in settings.")
                 recognizer = nil
                 isRunning = false
-                return
+                return true
             }
 
             if recognizer == nil {
@@ -211,18 +212,31 @@ class SherpaOnnxTranscriber {
 
             // Nemotron 3.5 multilingual selects language per stream. Applying this
             // to transducer streams is harmless for models that do not consume it.
-            if let languageCode = UserDefaults.standard.string(forKey: "STTModelLanguageCode"), !languageCode.isEmpty {
-                recognizer?.setOption(key: "language", value: languageCode)
+            if let languageCode = STTTools.languageForRecognizer(), !languageCode.isEmpty {
+                try recognizer?.setOption(key: "language", value: languageCode)
                 Bridge.log("Sherpa stream language option: \(languageCode)")
             }
 
-            startProcessingTask()
+            // Construction alone does not execute OnlineTransducerNeMoModel::RunEncoder.
+            // Decode silence once so an incompatible cache/prompt tensor contract fails
+            // before this recognizer is considered usable.
+            try recognizer?.smokeTest(sampleRate: Self.SAMPLE_RATE)
+            try recognizer?.recreateStream()
+            if let languageCode = STTTools.languageForRecognizer(), !languageCode.isEmpty {
+                try recognizer?.setOption(key: "language", value: languageCode)
+            }
+
             isRunning = true
+            startProcessingTask()
 
             Bridge.log("Sherpa-ONNX ASR initialized successfully with \(modelType) model")
+            return true
 
         } catch {
             Bridge.log("Failed to initialize Sherpa-ONNX: \(error.localizedDescription)")
+            recognizer = nil
+            isRunning = false
+            return false
         }
     }
 
@@ -327,12 +341,12 @@ class SherpaOnnxTranscriber {
                     let floatBuf = toFloatArray(from: data)
 
                     // Pass audio data to the Sherpa-ONNX stream
-                    recognizer.acceptWaveform(samples: floatBuf, sampleRate: Self.SAMPLE_RATE)
+                    try recognizer.acceptWaveform(samples: floatBuf, sampleRate: Self.SAMPLE_RATE)
 
                     // Decode continuously while model is ready
                     var decodeCount = 0
-                    while recognizer.isReady() {
-                        recognizer.decode()
+                    while try recognizer.isReady() {
+                        try recognizer.decode()
                         decodeCount += 1
                     }
 
@@ -345,7 +359,7 @@ class SherpaOnnxTranscriber {
                             handleTranscriptionResult(text: finalText, isFinal: true)
                         }
 
-                        recognizer.reset() // Start new utterance
+                        try recognizer.reset() // Start new utterance
                         lastPartialResult = ""
                     } else {
                         // Emit partial results if changed
@@ -361,6 +375,9 @@ class SherpaOnnxTranscriber {
                     }
                 } catch {
                     Bridge.log("❌ Error processing audio: \(error.localizedDescription)")
+                    isRunning = false
+                    STTTools.recoverFromRuntimeFailure(error.localizedDescription)
+                    return
                 }
             } else {
                 // Sleep briefly to avoid tight CPU loop if no audio is available
@@ -435,6 +452,8 @@ class SherpaOnnxTranscriber {
     func restart() {
         Bridge.log("♻️ Restarting SherpaOnnxTranscriber...")
         shutdown()
-        initialize()
+        if !initialize(), STTTools.fallbackToItalianBuiltIn(reason: "recognizer initialization failed") {
+            _ = initialize()
+        }
     }
 }

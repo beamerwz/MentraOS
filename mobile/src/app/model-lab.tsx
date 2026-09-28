@@ -5,7 +5,6 @@ import RNFS from "@dr.pogodin/react-native-fs"
 import {router} from "expo-router"
 
 import {Screen} from "@/components/ignite"
-import {engine} from "@mentra/engine"
 import {sttModelManager as STT} from "@mentra/engine-host-internal"
 
 type Metrics = {firstPartial: string; partialInterval: string; changedRate: string; decodeRtf: string; backlog: string; sttToG2: string}
@@ -29,8 +28,6 @@ export default function G2ModelLab() {
         await STT.downloadModel(code,p=>setProgress(p.percentage))
       }
       await STT.activateLanguage(code)
-      STT.setCurrentLanguage(code)
-      await engine.speech.restartTranscriber()
       setCurrent(code); setStatus("Active")
     }catch(e:any){setStatus(e?.message??"Model activation failed")}finally{setBusy(null);setProgress(0)}
   }
@@ -46,7 +43,6 @@ export default function G2ModelLab() {
       const source=decodeURIComponent(asset.uri.replace("file://",""))
       await RNFS.copyFile(source,temp)
       await STT.importCustomArchive(temp,"it-IT")
-      await engine.speech.restartTranscriber()
       setCurrent("custom"); setStatus(`Custom active · ${asset.name}`)
       await RNFS.unlink(temp).catch(()=>undefined)
     }catch(e:any){setStatus(e?.message??"Custom import failed")}finally{setBusy(null)}

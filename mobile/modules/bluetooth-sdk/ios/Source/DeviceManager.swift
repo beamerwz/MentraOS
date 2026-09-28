@@ -352,6 +352,7 @@ struct ViewState {
 
         // Initialize SherpaOnnx Transcriber
         #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+        STTTools.recoverPersistedModelBeforeInitialization()
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let window = windowScene.windows.first,
            let rootViewController = window.rootViewController
@@ -363,8 +364,11 @@ struct ViewState {
 
         // Initialize the transcriber
         if let transcriber = transcriber {
-            transcriber.initialize()
-            Bridge.log("SherpaOnnxTranscriber fully initialized")
+            if transcriber.initialize() {
+                Bridge.log("SherpaOnnxTranscriber fully initialized")
+            } else if STTTools.fallbackToItalianBuiltIn(reason: "startup recognizer smoke test failed") {
+                _ = transcriber.initialize()
+            }
         }
         #endif
 
@@ -1001,6 +1005,26 @@ struct ViewState {
         transcriber?.restart()
         #else
         Bridge.log("MAN: Local STT is not included in this SwiftPM build")
+        #endif
+    }
+
+    /// Loads and decodes the candidate before committing it to UserDefaults.
+    /// On failure, the known-good Italian model is restored immediately.
+    func activateSttModel(path: String, languageCode: String) -> Bool {
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+        guard let transcriber else { return false }
+        transcriber.shutdown()
+        STTTools.stageSttModelDetails(path, languageCode)
+        if transcriber.initialize() {
+            STTTools.commitStagedModel()
+            return true
+        }
+
+        _ = STTTools.forceItalianBuiltIn(reason: "candidate recognizer smoke test failed")
+        _ = transcriber.initialize()
+        return false
+        #else
+        return false
         #endif
     }
 

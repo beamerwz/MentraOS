@@ -235,6 +235,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // STT Commands
   setSttModelDetails(path: string, languageCode: string): Promise<void>
+  activateSttModel(path: string, languageCode: string): Promise<boolean>
   getSttModelPath(): Promise<string>
   checkSttModelAvailable(): Promise<boolean>
   validateSttModel(path: string): Promise<boolean>

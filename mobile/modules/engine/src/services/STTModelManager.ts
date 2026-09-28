@@ -39,9 +39,11 @@ export interface LanguageConfig {
   type: "transducer" | "ctc"
   requiredFiles: string[]
   languageCode: string
+  archiveSha256?: string
 }
 
 const DEFAULT_LANGUAGE = "en"
+const NEMOTRON_MARKER = ".g2labs-nemotron-v2"
 
 class STTModelManager {
   private static instance: STTModelManager
@@ -94,6 +96,7 @@ class STTModelManager {
       type: "transducer",
       requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
       languageCode: "it-IT",
+      archiveSha256: "fb170128c496db33a1fb9f5f9f823257f42f911224ee218bb429f3c2eaf90a8d",
       directFiles: [
         {
           fileName: "encoder.int8.onnx",
@@ -123,6 +126,7 @@ class STTModelManager {
       type: "transducer",
       requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
       languageCode: "it-IT",
+      archiveSha256: "a81909a1780d84cff16d73c15e13e67d9d81d8839faf14870d507d8499f7a61a",
     },
     nemotron_it_160: {
       code: "nemotron_it_160",
@@ -220,6 +224,12 @@ class STTModelManager {
       if (!language) return false
 
       const modelPath = this.getModelPath(id)
+      if (language.archiveSha256) {
+        const markerPath = `${modelPath}/${NEMOTRON_MARKER}`
+        if (!(await RNFS.exists(markerPath))) return false
+        const marker = (await RNFS.readFile(markerPath, "utf8")).trim().toLowerCase()
+        if (marker !== language.archiveSha256) return false
+      }
       for (const file of language.requiredFiles) {
         const filePath = `${modelPath}/${file}`
         const exists = await RNFS.exists(filePath)
@@ -341,9 +351,6 @@ class STTModelManager {
           throw new Error(`Downloaded STT model failed validation: ${id}`)
         }
 
-        if (id === this.currentLanguage) {
-          await this.setNativeModelPath(finalPath, language.languageCode)
-        }
         return
       }
 
@@ -376,7 +383,16 @@ class STTModelManager {
         throw new Error(`Download failed with status code: ${downloadResult.statusCode}`)
       }
 
+      if (language.archiveSha256) {
+        const actualDigest = (await RNFS.hash(tempPath, "sha256")).toLowerCase()
+        if (actualDigest !== language.archiveSha256) {
+          throw new Error(`Downloaded ${id} archive has an unexpected SHA-256 digest`)
+        }
+      }
+
       onExtractionProgress?.({percentage: 0})
+
+      if (await RNFS.exists(finalPath)) await RNFS.unlink(finalPath)
 
       const subscription = BluetoothSdk.addListener("extraction_progress", (event) => {
         onExtractionProgress?.({percentage: event.percentage})
@@ -396,12 +412,15 @@ class STTModelManager {
 
       onExtractionProgress?.({percentage: 100})
 
+      if (!(await BluetoothSdk.validateSttModel(finalPath))) {
+        throw new Error(`Extracted STT model failed validation: ${id}`)
+      }
+      if (language.archiveSha256) {
+        await RNFS.writeFile(`${finalPath}/${NEMOTRON_MARKER}`, `${language.archiveSha256}\n`, "utf8")
+      }
+
       await RNFS.unlink(tempPath)
       this.downloadJobId = undefined
-
-      if (id === this.currentLanguage) {
-        await this.setNativeModelPath(finalPath, language.languageCode)
-      }
     } catch (error) {
       this.downloadJobId = undefined
 
@@ -443,7 +462,8 @@ class STTModelManager {
       throw new Error("Invalid Sherpa model. Expected tokens.txt plus encoder/decoder/joiner ONNX files, or model.onnx for CTC.")
     }
 
-    await this.setNativeModelPath(modelPath, languageCode)
+    const activated = await BluetoothSdk.activateSttModel(modelPath, languageCode)
+    if (!activated) throw new Error("Custom model failed its native recognizer smoke test")
     this.currentLanguage = "custom"
   }
 
@@ -456,7 +476,8 @@ class STTModelManager {
       if (dirs.length === 1 && (await BluetoothSdk.validateSttModel(dirs[0].path))) modelPath = dirs[0].path
     }
     if (!(await BluetoothSdk.validateSttModel(modelPath))) throw new Error("No valid custom model is installed")
-    await this.setNativeModelPath(modelPath, languageCode)
+    const activated = await BluetoothSdk.activateSttModel(modelPath, languageCode)
+    if (!activated) throw new Error("Custom model failed its native recognizer smoke test")
     this.currentLanguage = "custom"
   }
 
@@ -486,13 +507,13 @@ class STTModelManager {
       throw new Error(`Language ${code} model is not downloaded`)
     }
 
-    this.currentLanguage = code
     const modelPath = this.getModelPath(code)
-    await this.setNativeModelPath(modelPath, language.languageCode)
-  }
-
-  private async setNativeModelPath(path: string, languageCode: string): Promise<void> {
-    BluetoothSdk.setSttModelDetails(path, languageCode)
+    const activated = await BluetoothSdk.activateSttModel(modelPath, language.languageCode)
+    if (!activated) {
+      this.currentLanguage = "it"
+      throw new Error(`${language.displayName} failed its native recognizer smoke test; restored Italian Built-in`)
+    }
+    this.currentLanguage = code
   }
 
   async getStorageInfo(): Promise<{free: number; total: number}> {

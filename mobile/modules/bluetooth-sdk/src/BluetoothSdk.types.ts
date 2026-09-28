@@ -1233,6 +1233,7 @@ export interface BluetoothSdkPublicModule {
 
   // STT Commands (TODO: MOVE TO CRUST)
   setSttModelDetails(path: string, languageCode: string): Promise<void>
+  activateSttModel(path: string, languageCode: string): Promise<boolean>
   getSttModelPath(): Promise<string>
   checkSttModelAvailable(): Promise<boolean>
   validateSttModel(path: string): Promise<boolean>

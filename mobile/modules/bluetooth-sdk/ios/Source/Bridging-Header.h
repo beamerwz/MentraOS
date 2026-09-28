@@ -12,5 +12,6 @@
 
 // sherpa-onnx C API - direct file path
 #import "sherpa-onnx/c-api/c-api.h"
+#import "stt/SherpaOnnxSafeBridge.h"
 
 #import <bzlib.h>

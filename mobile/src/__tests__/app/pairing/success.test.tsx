@@ -144,6 +144,20 @@ describe("pairing success screen", () => {
     expect(engine.pairing.waitForBluetoothClassic).not.toHaveBeenCalled()
   })
 
+  it("finishes G2 LABS pairing without entering Mentra onboarding", async () => {
+    ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G2"}})
+
+    const {getAllByText} = render(<PairingSuccessScreen />)
+
+    await waitFor(() => expect(getAllByText("common:continue").length).toBeGreaterThan(0))
+    fireEvent.press(getAllByText("common:continue")[1])
+
+    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
+    expect(push).not.toHaveBeenCalled()
+    expect(pushUnder).not.toHaveBeenCalled()
+    expect(engine.pairing.waitForBluetoothClassic).not.toHaveBeenCalled()
+  })
+
   it("opens MentraOS onboarding after pairing non-Live glasses when it is incomplete", async () => {
     ;(useRoute as jest.Mock).mockReturnValue({params: {deviceModel: "Even Realities G1"}})
 

@@ -6,7 +6,6 @@ import {ConsoleLogger} from "@/utils/dev/console"
 import {FirebaseAnalyticsSetup} from "@/effects/FirebaseAnalyticsSetup"
 import {OtaUpdateChecker} from "@/effects/OtaUpdateChecker"
 import {BtClassicPairing} from "@/effects/BtClassicPairing"
-import {ScreenshotFeedbackPrompt} from "@/effects/ScreenshotFeedbackPrompt"
 import NavigationHost from "@/effects/NavigationHost"
 import CapsuleMenu from "@/effects/CapsuleMenu"
 import Compositor from "@/effects/Compositor"
@@ -30,7 +29,6 @@ export const AllEffects = () => {
       <GalleryModeSync />
       <ConsoleLogger />
       <FirebaseAnalyticsSetup />
-      {process.env.G2_ACCESS_BUILD !== "1" && <ScreenshotFeedbackPrompt />}
       <CapsuleMenu forceShow={false} />
       <Compositor />
       <QrScanOverlay />

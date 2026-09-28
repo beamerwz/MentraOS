@@ -7,6 +7,12 @@ export default function NavigationHost() {
   const pathname = usePathname()
 
   useEffect(() => {
+    // G2 LABS is account-free and has its own direct pairing boot. Never allow
+    // restored navigation state or a deep link to enter Mentra onboarding.
+    if (pathname.startsWith("/onboarding")) {
+      useNavigationStore.getState().replaceAll("/")
+      return
+    }
     useNavigationStore.getState()._trackPathname(pathname)
     // if we're on the home screen, reset the animation to fade:
     if (pathname === "/home") {

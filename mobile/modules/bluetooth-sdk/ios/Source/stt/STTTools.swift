@@ -1,6 +1,35 @@
 import Foundation
 
 class STTTools {
+    private static let nemotronMarker = ".g2labs-nemotron-v2"
+    private static let nemotronDigests: [String: String] = [
+        "nemotron_it_80": "fb170128c496db33a1fb9f5f9f823257f42f911224ee218bb429f3c2eaf90a8d",
+        "nemotron_it_160": "a81909a1780d84cff16d73c15e13e67d9d81d8839faf14870d507d8499f7a61a",
+    ]
+    private static var stagedModel: (path: String, languageCode: String)?
+
+    static func modelPathForRecognizer() -> String? {
+        return stagedModel?.path ?? UserDefaults.standard.string(forKey: "STTModelPath")
+    }
+
+    static func languageForRecognizer() -> String? {
+        return stagedModel?.languageCode ?? UserDefaults.standard.string(forKey: "STTModelLanguageCode")
+    }
+
+    static func stageSttModelDetails(_ path: String, _ languageCode: String) {
+        stagedModel = (path, languageCode)
+    }
+
+    static func commitStagedModel() {
+        guard let stagedModel else { return }
+        setSttModelDetails(stagedModel.path, stagedModel.languageCode)
+        self.stagedModel = nil
+    }
+
+    static func clearStagedModel() {
+        stagedModel = nil
+    }
+
     // MARK: - SherpaOnnxTranscriber / STT Model Management
 
     static func didReceivePartialTranscription(_ text: String) {
@@ -51,6 +80,71 @@ class STTTools {
         UserDefaults.standard.set(path, forKey: "STTModelPath")
         UserDefaults.standard.set(languageCode, forKey: "STTModelLanguageCode")
         UserDefaults.standard.synchronize()
+    }
+
+    /// The multilingual archives were replaced in place on 2026-07-09. A model
+    /// downloaded before then has the same path and filenames but an incompatible
+    /// encoder cache shape, so reject it before DeviceManager constructs Sherpa.
+    static func recoverPersistedModelBeforeInitialization() {
+        guard let modelPath = UserDefaults.standard.string(forKey: "STTModelPath"),
+              let modelID = modelPath.split(separator: "/").last.map(String.init),
+              let expectedDigest = nemotronDigests[modelID]
+        else { return }
+
+        let markerPath = (modelPath as NSString).appendingPathComponent(nemotronMarker)
+        let marker = try? String(contentsOfFile: markerPath, encoding: .utf8)
+        if marker?.trimmingCharacters(in: .whitespacesAndNewlines) != expectedDigest {
+            _ = fallbackToItalianBuiltIn(reason: "unverified Nemotron export")
+        }
+    }
+
+    @discardableResult
+    static func fallbackToItalianBuiltIn(reason: String) -> Bool {
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let italianPath = documents.appendingPathComponent("stt_models/it").path
+        if validateSTTModel(italianPath) {
+            let currentPath = UserDefaults.standard.string(forKey: "STTModelPath") ?? ""
+            if currentPath.hasSuffix("/stt_models/it") {
+                Bridge.log("STT recovery: \(reason); Italian Built-in also failed, disabling local STT")
+                UserDefaults.standard.removeObject(forKey: "STTModelPath")
+                UserDefaults.standard.removeObject(forKey: "STTModelLanguageCode")
+                UserDefaults.standard.synchronize()
+                return false
+            }
+            Bridge.log("STT recovery: \(reason); activating Italian Built-in")
+            setSttModelDetails(italianPath, "it-IT")
+            return true
+        }
+
+        Bridge.log("STT recovery: \(reason); Italian Built-in is unavailable, disabling local STT")
+        UserDefaults.standard.removeObject(forKey: "STTModelPath")
+        UserDefaults.standard.removeObject(forKey: "STTModelLanguageCode")
+        UserDefaults.standard.synchronize()
+        return false
+    }
+
+    @discardableResult
+    static func forceItalianBuiltIn(reason: String) -> Bool {
+        clearStagedModel()
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let italianPath = documents.appendingPathComponent("stt_models/it").path
+        guard validateSTTModel(italianPath) else {
+            UserDefaults.standard.removeObject(forKey: "STTModelPath")
+            UserDefaults.standard.removeObject(forKey: "STTModelLanguageCode")
+            UserDefaults.standard.synchronize()
+            return false
+        }
+        Bridge.log("STT recovery: \(reason); activating Italian Built-in")
+        setSttModelDetails(italianPath, "it-IT")
+        return true
+    }
+
+    static func recoverFromRuntimeFailure(_ detail: String) {
+        let changed = fallbackToItalianBuiltIn(reason: "native decode failed: \(detail)")
+        guard changed else { return }
+        DispatchQueue.main.async {
+            DeviceManager.shared.restartTranscriber()
+        }
     }
 
     static func getSttModelPath() -> String {

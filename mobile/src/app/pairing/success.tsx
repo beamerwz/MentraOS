@@ -35,7 +35,7 @@ export default function PairingSuccessScreen() {
   const glassesImage = deviceModel === DeviceTypes.AR99 ? getAr99ImageSource(ar99ProjectName) : getGlassesImage(deviceModel)
 
   const buildSetupStack = useCallback(async (): Promise<string[]> => {
-    if (deviceModel === DeviceTypes.AR99) {
+    if (deviceModel === DeviceTypes.AR99 || deviceModel === DeviceTypes.G2) {
       return []
     }
     const features = getModelCapabilities(deviceModel as DeviceTypes)
