@@ -4,7 +4,7 @@ import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
 
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
 import {MentraLogo} from "@/components/brands/MentraLogo"
-import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {G2LabsLogo} from "@/components/brands/G2LabsLogo"
 import {NimoLogo} from "@/components/brands/NimoLogo"
 import {VuzixLogo} from "@/components/brands/VuzixLogo"
 import {XingyiLogo} from "@/components/brands/XingyiLogo"
@@ -114,7 +114,7 @@ export default function SelectGlassesModelScreen() {
         onLeftPress={() => {
           goBack()
         }}
-        RightActionComponent={<MentraLogoStandalone />}
+        RightActionComponent={<G2LabsLogo width={34} height={34} />}
       />
       <Spacer className="h-4" />
       <ScrollView className="-mx-6 px-6 pt-6">
