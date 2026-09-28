@@ -7,6 +7,7 @@ import {cloudConfigValues} from "@/services/cloudClient"
 import {G2LabsLogo} from "@/components/brands/G2LabsLogo"
 import {Screen, Text} from "@/components/ignite"
 import {useNavigationStore} from "@/stores/navigation"
+import {ensureG2LabsEngineStarted} from "@/services/G2LabsBootstrap"
 
 /**
  * G2 LABS local boot.
