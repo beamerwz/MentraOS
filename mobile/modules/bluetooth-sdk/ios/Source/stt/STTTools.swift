@@ -78,14 +78,13 @@ class STTTools {
         UserDefaults.standard.synchronize()
     }
 
-    /// Experimental Nemotron selections are never restored on cold start.
-    /// This prevents an incompatible native model from trapping the app in an
-    /// ONNX Runtime crash loop before Swift recovery can run.
+    /// Model selection is constructed only once per clean process launch.
+    /// Do not rewrite a valid persisted selection here: live teardown/recreate is
+    /// deliberately avoided because it can invalidate ORT's global API on iOS.
     static func recoverPersistedModelBeforeInitialization() {
         guard let modelPath = UserDefaults.standard.string(forKey: "STTModelPath") else { return }
-        let modelID = modelPath.split(separator: "/").last.map(String.init) ?? ""
-        if modelID.hasPrefix("nemotron_") {
-            _ = forceItalianBuiltIn(reason: "experimental Nemotron is never restored on cold start")
+        if !validateSTTModel(modelPath) {
+            _ = forceItalianBuiltIn(reason: "persisted STT model is incomplete")
         }
     }
 
