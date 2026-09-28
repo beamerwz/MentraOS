@@ -1,0 +1,129 @@
+name: G2 Access unsigned iOS IPA
+
+on:
+  push:
+    branches:
+      - g2-italian-offline-3.1.1
+    paths:
+      - "mobile/**"
+      - ".github/workflows/g2-access-ios-unsigned.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: g2-access-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      G2_ACCESS_BUILD: "1"
+      EXPO_PUBLIC_BUILD_ENV: "dev"
+      EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN: "g2-access-no-navigation"
+      SENTRY_DISABLE_AUTO_UPLOAD: "true"
+      SENTRY_ALLOW_FAILURE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free space not needed by iOS build
+        run: |
+          rm -rf "$HOME/Library/Android/sdk" 2>/dev/null || true
+          rm -rf "$HOME/.gradle" 2>/dev/null || true
+          rm -rf "$HOME/.android" 2>/dev/null || true
+          df -h /
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install JavaScript dependencies
+        working-directory: mobile
+        run: bun install --no-frozen-lockfile
+
+      - name: Configure development environment
+        working-directory: mobile
+        run: |
+          cp .env.example .env
+          {
+            echo "G2_ACCESS_BUILD=1"
+            echo "EXPO_PUBLIC_BUILD_ENV=dev"
+            echo "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN=g2-access-no-navigation"
+          } >> .env
+
+      - name: Disable phone navigation for token-free accessibility build
+        working-directory: mobile
+        run: |
+          cp scripts/g2-access/NavigationManager.swift modules/crust/ios/navigation/NavigationManager.swift
+          cp scripts/g2-access/NavPayloads.swift modules/crust/ios/navigation/NavPayloads.swift
+
+      - name: Generate iOS project
+        working-directory: mobile
+        run: bun expo prebuild --platform ios
+
+      - name: Setup Sherpa ONNX
+        working-directory: mobile
+        run: |
+          chmod +x scripts/setup-sherpa-onnx-optional.sh
+          ./scripts/setup-sherpa-onnx-optional.sh
+
+      - name: Install CocoaPods
+        working-directory: mobile/ios
+        run: pod install --repo-update
+
+      - name: Build unsigned device app
+        working-directory: mobile/ios
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -workspace Mentra.xcworkspace \
+            -scheme Mentra \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-g2-access \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PRODUCT_BUNDLE_IDENTIFIER="com.beamerwz.g2access" \
+            INFOPLIST_KEY_CFBundleDisplayName="G2 Access" \
+            build | tee ../../g2-access-xcodebuild.log
+
+      - name: Package unsigned IPA
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          APP="$(find ios/build-g2-access/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -1)"
+          if [ -z "$APP" ]; then
+            echo "::error::No device .app found"
+            exit 1
+          fi
+          echo "Packaging $APP"
+          rm -rf Payload
+          mkdir Payload
+          cp -R "$APP" Payload/
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "Payload/$(basename "$APP")/Info.plist"
+          zip -qry G2_ACCESS_Mentra_3.1.1_Italian_unsigned.ipa Payload
+          rm -rf Payload
+          ls -lh G2_ACCESS_Mentra_3.1.1_Italian_unsigned.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: G2_ACCESS_Mentra_3.1.1_Italian_unsigned_IPA
+          path: mobile/G2_ACCESS_Mentra_3.1.1_Italian_unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Xcode log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: G2_ACCESS_xcodebuild_log
+          path: g2-access-xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
