@@ -71,8 +71,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   // dev. See issues/mapbox-navigation-migration.md.
   // The China build (cn variant) ships without Mentra Map, so it has no nav
   const isChinaBuild = variant === VARIANTS.cn
+  // Our accessibility build intentionally omits phone navigation so the fork can
+  // be built on stock GitHub-hosted macOS runners without Mentra's private
+  // Mapbox Downloads token. G2 Bluetooth, audio, HUD and offline STT are untouched.
+  const isG2AccessBuild = process.env.G2_ACCESS_BUILD === "1"
   const mapboxAccessToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ""
-  if (!mapboxAccessToken && !isChinaBuild) {
+  if (!mapboxAccessToken && !isChinaBuild && !isG2AccessBuild) {
     const isCiOrEas =
       process.env.CI === "true" ||
       process.env.CI === "1" ||
@@ -243,11 +247,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // level ("Multiple commands produce …MapboxCommon.framework"). The runtime
       // pk. token is injected into Info.plist as MBXAccessToken (above); the
       // secret Downloads:Read token is read from ~/.netrc at build time.
-      "./plugins/mapbox-nav-ios.ts",
-      // Crust is a CocoaPods target; SPM products linked to the app project
-      // aren't visible to it. This links the Mapbox products into the Crust
-      // pod target (via Podfile post_install) so its Swift can import them.
-      "./plugins/mapbox-nav-crust-link.ts",
+      // The G2 accessibility build does not ship phone navigation. Omitting
+      // these two plugins avoids the private Mapbox Downloads token while
+      // leaving the glasses/BLE/audio/STT stack exactly on Mentra's code path.
+      ...(isG2AccessBuild
+        ? []
+        : ["./plugins/mapbox-nav-ios.ts", "./plugins/mapbox-nav-crust-link.ts"]),
       [
         "./modules/bluetooth-sdk/app.plugin.js",
         {
