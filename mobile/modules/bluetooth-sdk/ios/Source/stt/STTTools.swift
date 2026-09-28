@@ -2,10 +2,6 @@ import Foundation
 
 class STTTools {
     private static let nemotronMarker = ".g2labs-nemotron-v2"
-    private static let nemotronDigests: [String: String] = [
-        "nemotron_it_80": "fb170128c496db33a1fb9f5f9f823257f42f911224ee218bb429f3c2eaf90a8d",
-        "nemotron_it_160": "a81909a1780d84cff16d73c15e13e67d9d81d8839faf14870d507d8499f7a61a",
-    ]
     private static var stagedModel: (path: String, languageCode: String)?
 
     static func modelPathForRecognizer() -> String? {
