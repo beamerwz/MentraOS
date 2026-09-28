@@ -223,8 +223,12 @@ class SherpaOnnxTranscriber {
      * Handle transcription results - send only to delegate
      */
     private func handleTranscriptionResult(text: String, isFinal: Bool) {
-        // Forward to delegate if set
+        let g2TraceResultNs = DispatchTime.now().uptimeNanoseconds
+        Bridge.log("G2LAB_TRACE T3_SHERPA_RESULT ns=\(g2TraceResultNs) final=\(isFinal) chars=\(text.count) text=\(text.debugDescription)")
+        // Forward to delegate if set. Measure main-queue handoff separately.
         DispatchQueue.main.async { [weak self] in
+            let g2TraceMainNs = DispatchTime.now().uptimeNanoseconds
+            Bridge.log("G2LAB_TRACE T4_MAIN_STT_CALLBACK ns=\(g2TraceMainNs) queueMs=\(String(format: "%.3f", Double(g2TraceMainNs - g2TraceResultNs) / 1_000_000.0)) final=\(isFinal)")
             if isFinal {
                 STTTools.didReceiveFinalTranscription(text)
             } else {
@@ -253,6 +257,10 @@ class SherpaOnnxTranscriber {
 
             let queueSizeBefore = self.pcmBuffers.count
             self.pcmBuffers.append(pcm16le)
+            let g2TraceQueueNs = DispatchTime.now().uptimeNanoseconds
+            let g2TraceSamples = pcm16le.count / MemoryLayout<Int16>.size
+            let g2TraceAudioMs = Double(g2TraceSamples) * 1000.0 / Double(Self.SAMPLE_RATE)
+            Bridge.log("G2LAB_TRACE STT_QUEUE ns=\(g2TraceQueueNs) depthBefore=\(queueSizeBefore) depthAfter=\(self.pcmBuffers.count) bytes=\(pcm16le.count) audioMs=\(String(format: "%.2f", g2TraceAudioMs))")
 
             // Keep queue size manageable
             if self.pcmBuffers.count > Self.QUEUE_CAPACITY {
@@ -296,6 +304,8 @@ class SherpaOnnxTranscriber {
             }
 
             if let data = audioData {
+                let g2TraceDecodeStartNs = DispatchTime.now().uptimeNanoseconds
+                Bridge.log("G2LAB_TRACE STT_DECODE_START ns=\(g2TraceDecodeStartNs) bytes=\(data.count)")
                 // Synchronize access to recognizer to prevent race conditions
                 objc_sync_enter(self)
                 defer { objc_sync_exit(self) }
@@ -336,6 +346,8 @@ class SherpaOnnxTranscriber {
                         let partial = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
 
                         if partial != lastPartialResult, !partial.isEmpty {
+                            let g2TracePartialNs = DispatchTime.now().uptimeNanoseconds
+                            Bridge.log("G2LAB_TRACE FIRST_CHANGED_PARTIAL ns=\(g2TracePartialNs) decodeMs=\(String(format: "%.3f", Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0)) chars=\(partial.count)")
                             handleTranscriptionResult(text: partial, isFinal: false)
                             lastPartialResult = partial
                         }
