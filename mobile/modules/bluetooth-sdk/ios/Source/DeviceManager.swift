@@ -1008,21 +1008,20 @@ struct ViewState {
         #endif
     }
 
-    /// Loads and decodes the candidate before committing it to UserDefaults.
-    /// On failure, the known-good Italian model is restored immediately.
+    /// Persist a candidate model without tearing down and recreating ONNX Runtime
+    /// in the same process. The iOS Sherpa XCFramework can invalidate ORT's global
+    /// C++ API during an in-process recognizer teardown/recreate, which produces an
+    /// unrecoverable EXC_BAD_ACCESS in SetIntraOpNumThreads. File validation is safe;
+    /// native construction is deferred to the next clean process launch.
     func activateSttModel(path: String, languageCode: String) -> Bool {
         #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        guard let transcriber else { return false }
-        transcriber.shutdown()
-        STTTools.stageSttModelDetails(path, languageCode)
-        if transcriber.initialize() {
-            STTTools.commitStagedModel()
-            return true
+        guard STTTools.validateSTTModel(path) else {
+            Bridge.log("STT activation rejected: model files are incomplete at \(path)")
+            return false
         }
-
-        _ = STTTools.forceItalianBuiltIn(reason: "candidate recognizer smoke test failed")
-        _ = transcriber.initialize()
-        return false
+        STTTools.setSttModelDetails(path, languageCode)
+        Bridge.log("STT model staged for clean-launch activation: \(path)")
+        return true
         #else
         return false
         #endif
