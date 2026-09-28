@@ -1,0 +1,27 @@
+name: G2 Italian Offline Check
+
+on:
+  push:
+    branches:
+      - g2-italian-offline-3.1.1
+    paths:
+      - "mobile/modules/engine/src/services/STTModelManager.ts"
+      - ".github/workflows/g2-italian-offline-check.yml"
+  workflow_dispatch:
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install --no-frozen-lockfile
+      - name: TypeScript compile check
+        run: bun run compile
