@@ -60,6 +60,12 @@ export default function G2LabsInitScreen() {
 
       console.log("G2LABS_BOOT fresh install -> G2 pairing")
       replace("/pairing/prep", {deviceModel: DeviceTypes.G2, onboarding: true, transition: "fade"})
+      } catch (error) {
+        console.error("G2LABS_BOOT bootstrap failed:", error)
+        // Keep first launch recoverable: pairing permissions/native scan may
+        // still work even if an optional engine service failed to initialize.
+        replace("/pairing/prep", {deviceModel: DeviceTypes.G2, onboarding: true, transition: "fade"})
+      }
     }
 
     void boot()
