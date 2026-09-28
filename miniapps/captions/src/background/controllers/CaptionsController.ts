@@ -652,6 +652,10 @@ export class CaptionsController {
     }
 
     // 4. Render on glasses.
+    const g2LabsRenderAt = performance.now()
+    console.log(
+      `G2LAB_TRACE T6_CAPTIONS_RENDER perfMs=${g2LabsRenderAt.toFixed(3)} final=${data.isFinal} chars=${displayText.length}`,
+    )
     this.processAndDisplay(displayText, data.isFinal, speakerId)
   }
 
@@ -864,6 +868,10 @@ export class CaptionsController {
       maxTextLines,
       lineHeightPx: this.currentProfile.lineHeightPx,
     })
+    const g2LabsDisplayAt = performance.now()
+    console.log(
+      `G2LAB_TRACE T7_DISPLAY_RENDER perfMs=${g2LabsDisplayAt.toFixed(3)} chars=${text.length}`,
+    )
     void this.session.display.render([{type: "text", id: "caption", box, text}])
   }
 
