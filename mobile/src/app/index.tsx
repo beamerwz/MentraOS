@@ -1,398 +1,54 @@
 import {useRootNavigationState} from "expo-router"
-import {useState, useEffect, useRef, useCallback} from "react"
-import {View, ActivityIndicator, Platform, Linking} from "react-native"
-import semver from "semver"
+import {useEffect, useRef} from "react"
+import {ActivityIndicator, View} from "react-native"
 
-import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
-import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
-import {useAuth} from "@/contexts/AuthContext"
-import {useDeeplink} from "@/contexts/DeeplinkContext"
-import {useAppTheme} from "@/contexts/ThemeContext"
+import {DeviceTypes, SETTINGS, engine, useSetting} from "@mentra/engine"
+import {G2LabsLogo} from "@/components/brands/G2LabsLogo"
+import {Screen, Text} from "@/components/ignite"
 import {useNavigationStore} from "@/stores/navigation"
-import {translate} from "@/i18n"
-import mantle from "@/services/MantleManager"
-import {SETTINGS, engine, useSetting} from "@mentra/engine"
-import {SplashVideo} from "@/components/splash/SplashVideo"
-import {APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
-import {fetchMinimumClientVersion} from "@/utils/cloudVersion"
-import {BgTimer} from "@mentra/engine"
 
-// Types
-type ScreenState = "loading" | "connection" | "auth" | "outdated" | "success"
-
-interface StatusConfig {
-  icon: string
-  iconColor: string
-  title: string
-  description: string
-}
-
-// Constants
-const NAVIGATION_DELAY = 300
-const DEEPLINK_DELAY = 1000
-
-export default function InitScreen() {
-  // Hooks
-  const {theme} = useAppTheme()
-  const {user, session, loading: authLoading} = useAuth()
-  const {replace, replaceAll, getPendingRoute, setPendingRoute, clearHistoryAndGoHome, setAnimation} =
-    useNavigationStore.getState()
-  const {processUrl} = useDeeplink()
+/**
+ * G2 LABS local boot.
+ *
+ * Deliberately does not enter Mentra account/cloud authentication.  Pairing,
+ * reconnect, settings and the native G2 transport remain owned by the existing
+ * engine.  On a fresh install we enter the proven G2 prep/pairing flow directly.
+ */
+export default function G2LabsInitScreen() {
   const rootNavigationState = useRootNavigationState()
-  const isNavigationReady = rootNavigationState?.key != null
-
-  // State
-  const initStartedRef = useRef(false)
-  const [state, setState] = useState<ScreenState>("loading")
-  const [localVersion, setLocalVersion] = useState<string | null>(null)
-  const [cloudVersion, setCloudVersion] = useState<string | null>(null)
-  const [isUpdating, setIsUpdating] = useState(false)
-  const [isUsingCustomUrl, setIsUsingCustomUrl] = useState(false)
-  const [canSkipUpdate, setCanSkipUpdate] = useState(false)
-  const [isRetrying, setIsRetrying] = useState(false)
-  const [isBlockedByVersion, setIsBlockedByVersion] = useState(false)
-  // Zustand store hooks
-  // The boot version gate hits cloud_core_url (resolvedEndpoints().core), so the
-  // custom-URL detection + reset recovery operate on that setting, not the
-  // retired V1 backend_url.
-  const [coreUrl, setCoreUrl] = useSetting(SETTINGS.cloud_core_url.key)
-  const [onboardingCompleted, _setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
-  const [defaultWearable, _setDefaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const [appBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
-  const [bootPhase, setBootPhase] = useState<string>("Starting up…")
-  const [cachedRequiredVersion, setCachedRequiredVersion] = useSetting(SETTINGS.cached_required_version.key)
-
-  // Helper Functions
-  const getLocalVersion = (): string | null => {
-    try {
-      return process.env.EXPO_PUBLIC_MENTRAOS_VERSION || null
-    } catch (error) {
-      console.error("Error getting local version:", error)
-      return null
-    }
-  }
-
-  const checkCustomUrl = async (): Promise<boolean> => {
-    const defaultUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
-    // Read directly from the store to avoid stale React closure values
-    const currentUrl = engine.settings.get(SETTINGS.cloud_core_url.key)
-    const isCustom = currentUrl !== defaultUrl
-    setIsUsingCustomUrl(isCustom)
-    return isCustom
-  }
-
-  const setAnimationDelayed = () => {
-    BgTimer.setTimeout(() => {
-      setAnimation("simple_push")
-    }, 800)
-  }
+  const {replace, clearHistoryAndGoHome} = useNavigationStore.getState()
+  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const routed = useRef(false)
 
   useEffect(() => {
-    console.log("INDEX: MOUNTED")
-    return () => console.log("INDEX: UNMOUNTED")
-  }, [])
+    if (!rootNavigationState?.key || routed.current) return
+    routed.current = true
 
-  const navigateToDestination = useCallback(async () => {
-    console.log("INDEX: navigateToDestination()")
-    if (!user?.email) {
-      await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
-      replace("/auth/start", {transition: "fade"})
-      return
-    }
+    const boot = async () => {
+      // Give the settings/native engine one tick to finish hydration.
+      await new Promise((resolve) => setTimeout(resolve, 120))
 
-    // Read directly from the store so we see values that mantle.init() just
-    // loaded from the server, regardless of React render timing.
-    const onboardingDone = engine.settings.get(SETTINGS.onboarding_completed.key)
-    const wearable = engine.settings.get(SETTINGS.default_wearable.key)
-
-    if (!onboardingDone && !wearable) {
-      await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
-      replace("/onboarding/welcome", {transition: "fade"})
-      return
-    }
-
-    const pendingRoute = getPendingRoute()
-    if (pendingRoute) {
-      setPendingRoute(null)
-      // Navigate to home first so the deep link screen has a proper back destination
-      clearHistoryAndGoHome({transition: "none"})
-      setTimeout(() => processUrl(pendingRoute), DEEPLINK_DELAY)
-      return
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
-    setAnimationDelayed()
-    clearHistoryAndGoHome({transition: "none"})
-  }, [user, getPendingRoute, processUrl, clearHistoryAndGoHome, replace, replaceAll, setPendingRoute, setAnimation])
-
-  const checkLoggedIn = async (): Promise<void> => {
-    if (!user) {
-      replaceAll("/auth/start")
-      return
-    }
-    handleTokenExchange()
-  }
-
-  const handleTokenExchange = async (): Promise<void> => {
-    console.log("INDEX: handleTokenExchange()")
-    // Cloud V2 cutover (issue 019): the app holds V2 tokens directly. There is no
-    // legacy Cloud V1 exchange; cloud-client obtains and exchanges a subject token
-    // itself via the auth provider. Boot just needs a valid session, then init.
-    const token = session?.token
-    if (!token) {
-      setState("auth")
-      return
-    }
-
-    setBootPhase("Initializing core…")
-    await mantle.init()
-
-    setBootPhase("Navigating…")
-    await navigateToDestination()
-  }
-
-  const checkCloudVersion = async (isRetry = false): Promise<void> => {
-    // Only show loading screen on initial load, not on retry
-    if (!isRetry) {
-      setState("loading")
-    } else {
-      setIsRetrying(true)
-    }
-    setBootPhase("Checking for updates…")
-
-    const localVer = getLocalVersion()
-    console.log("INDEX: Local version:", localVer)
-
-    if (!localVer) {
-      console.error("Failed to get local version")
-      setState("connection")
-      setIsRetrying(false)
-      return
-    }
-
-    // Cloud V2 core serves the version gate (V1's copy is retired with
-    // RestComms). Retries cover the boot-time DNS blips that historically
-    // dumped users at the connection-error screen (which blocks login).
-    const res = await fetchMinimumClientVersion(3, 1000)
-    if (res.is_error()) {
-      console.error("Failed to fetch cloud version:", res.error)
-
-      // Even offline, check cached required version to block outdated apps
-      if (cachedRequiredVersion && semver.lt(localVer, cachedRequiredVersion)) {
-        console.log(`INDEX: Offline but app is below cached required version (${localVer} < ${cachedRequiredVersion})`)
-        setLocalVersion(localVer)
-        setCloudVersion(cachedRequiredVersion)
-        setCanSkipUpdate(false)
-        setIsBlockedByVersion(true)
-        setState("outdated")
-        setIsRetrying(false)
+      const pairedWearable = engine.settings.get(SETTINGS.default_wearable.key) || defaultWearable
+      if (pairedWearable === DeviceTypes.G2) {
+        console.log("G2LABS_BOOT existing G2 pairing found -> home")
+        clearHistoryAndGoHome({transition: "none"})
         return
       }
 
-      setState("connection")
-      setIsRetrying(false)
-      return
+      console.log("G2LABS_BOOT fresh install -> G2 pairing")
+      replace("/pairing/prep", {deviceModel: DeviceTypes.G2, onboarding: true, transition: "fade"})
     }
 
-    const {required, recommended} = res.value
-    console.log(`INDEX: Version check: local=${localVer}, required=${required}, recommended=${recommended}`)
-
-    // Cache the required version for offline enforcement
-    if (required && required !== cachedRequiredVersion) {
-      setCachedRequiredVersion(required)
-    }
-
-    if (semver.lt(localVer, recommended)) {
-      setLocalVersion(localVer)
-      setCloudVersion(recommended)
-      setCanSkipUpdate(!semver.lt(localVer, required))
-      setIsBlockedByVersion(semver.lt(localVer, required))
-      setState("outdated")
-      setIsRetrying(false)
-      return
-    }
-
-    setIsRetrying(false)
-    checkLoggedIn()
-  }
-
-  const handleUpdate = async (): Promise<void> => {
-    setIsUpdating(true)
-    try {
-      const url = Platform.OS === "ios" ? APP_STORE_URL : PLAY_STORE_URL
-      await Linking.openURL(url)
-    } catch (error) {
-      console.error("Error opening store:", error)
-    } finally {
-      setIsUpdating(false)
-    }
-  }
-
-  const handleResetUrl = async (): Promise<void> => {
-    try {
-      const defaultUrl = SETTINGS[SETTINGS.cloud_core_url.key].defaultValue()
-      await setCoreUrl(defaultUrl)
-      setIsUsingCustomUrl(false)
-      await checkCloudVersion(true) // Pass true for retry to avoid flash
-    } catch (error) {
-      console.error("Failed to reset URL:", error)
-    }
-  }
-
-  const getStatusConfig = (): StatusConfig => {
-    switch (state) {
-      case "auth":
-        return {
-          icon: "account-alert",
-          iconColor: theme.colors.destructive,
-          title: translate("versionCheck:authErrorTitle"),
-          description: translate("versionCheck:authErrorDescription"),
-        }
-
-      case "connection":
-        return {
-          icon: "wifi-off",
-          iconColor: theme.colors.destructive,
-          title: translate("versionCheck:connectionErrorTitle"),
-          description: isUsingCustomUrl
-            ? translate("versionCheck:connectionErrorCustomUrl")
-            : translate("versionCheck:connectionErrorDescription"),
-        }
-
-      case "outdated":
-        return {
-          icon: "update",
-          iconColor: theme.colors.destructive,
-          title: translate(canSkipUpdate ? "versionCheck:updateAvailableTitle" : "versionCheck:updateRequiredTitle"),
-          description: translate(
-            canSkipUpdate ? "versionCheck:updateAvailableDescription" : "versionCheck:updateRequiredDescription",
-          ),
-        }
-
-      default:
-        return {
-          icon: "check-circle",
-          iconColor: theme.colors.primary,
-          title: translate("versionCheck:upToDateTitle"),
-          description: translate("versionCheck:upToDateDescription"),
-        }
-    }
-  }
-
-  // Effects
-  useEffect(() => {
-    console.log("INDEX: USE EFFECT: authLoading, isNavigationReady:", authLoading, isNavigationReady)
-    if (authLoading || !isNavigationReady) return
-    if (initStartedRef.current) return
-    initStartedRef.current = true
-
-    const init = async () => {
-      console.log("INDEX: init()")
-      await checkCustomUrl()
-      await checkCloudVersion()
-    }
-    init()
-  }, [authLoading, isNavigationReady])
-
-  // Clear cached required version when backend URL changes so a stricter
-  // server's requirement doesn't block access to a different backend.
-  // Skip the initial mount so the cached value is preserved for offline enforcement.
-  const coreUrlRef = useRef(coreUrl)
-  useEffect(() => {
-    if (coreUrlRef.current !== coreUrl) {
-      coreUrlRef.current = coreUrl
-      if (cachedRequiredVersion) {
-        setCachedRequiredVersion("")
-      }
-    }
-  }, [coreUrl])
-
-  useEffect(() => {
-    setAnimation("fade")
-  }, [])
-
-  // Render
-  if (state === "loading") {
-    return (
-      <Screen preset="fixed">
-        <SplashVideo label={appBootExtraInfo ? bootPhase : undefined} />
-      </Screen>
-    )
-  }
-
-  const statusConfig = getStatusConfig()
+    void boot()
+  }, [rootNavigationState?.key, defaultWearable, replace, clearHistoryAndGoHome])
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
-      <Header RightActionComponent={<MentraLogoStandalone />} />
-
-      {/* Content */}
-      <View className="flex-1 items-center justify-center px-6">
-        {state === "outdated" ? (
-          <MentraLogoStandalone width={100} height={48} />
-        ) : (
-          <Icon name={statusConfig.icon as any} size={64} color={statusConfig.iconColor} />
-        )}
-        <View className="h-6" />
-        <Text text={statusConfig.title} className="font-semibold text-xl text-center" />
-        <View className="h-2" />
-        <Text text={statusConfig.description} className="text-sm text-center" style={{color: theme.colors.textDim}} />
-
-        {/* Version info — only visible in super mode */}
-        {state === "outdated" && superMode && localVersion && cloudVersion && (
-          <>
-            <View className="h-4" />
-            <Text
-              text={`v${localVersion} → v${cloudVersion}`}
-              className="text-xs text-center"
-              style={{color: theme.colors.textDim}}
-            />
-          </>
-        )}
-      </View>
-
-      {/* Buttons */}
-      <View className="gap-3">
-        {(state === "connection" || state === "auth") && (
-          <Button
-            flexContainer
-            onPress={() => checkCloudVersion(true)}
-            text={isRetrying ? translate("versionCheck:retrying") : translate("versionCheck:retryConnection")}
-            disabled={isRetrying}
-            LeftAccessory={
-              isRetrying ? () => <ActivityIndicator size="small" color={theme.colors.foreground} /> : undefined
-            }
-          />
-        )}
-
-        {state === "outdated" && (
-          <Button
-            flexContainer
-            preset="primary"
-            onPress={handleUpdate}
-            disabled={isUpdating}
-            tx={canSkipUpdate ? "versionCheck:update" : "versionCheck:updateRequiredButton"}
-          />
-        )}
-
-        {(state === "connection" || state === "auth") && isUsingCustomUrl && (
-          <Button
-            flexContainer
-            onPress={handleResetUrl}
-            tx={isRetrying ? "versionCheck:resetting" : "versionCheck:resetUrl"}
-            preset="secondary"
-            disabled={isRetrying}
-            LeftAccessory={
-              isRetrying ? () => <ActivityIndicator size="small" color={theme.colors.foreground} /> : undefined
-            }
-          />
-        )}
-
-        {(((state === "connection" || state === "auth") && !isBlockedByVersion) ||
-          (state === "outdated" && canSkipUpdate)) && (
-          <Button flexContainer preset="secondary" onPress={navigateToDestination} tx="versionCheck:continueAnyway" />
-        )}
+    <Screen preset="fixed">
+      <View className="flex-1 bg-black items-center justify-center">
+        <G2LabsLogo width={92} height={92} />
+        <Text text="G2 LABS" className="text-white text-3xl font-bold mt-5" />
+        <Text text="Preparing your G2…" className="text-[#C4B5FD] text-base mt-2" />
+        <ActivityIndicator size="small" color="#A855F7" className="mt-6" />
       </View>
     </Screen>
   )
