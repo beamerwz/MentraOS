@@ -30,7 +30,7 @@ export const AllEffects = () => {
       <GalleryModeSync />
       <ConsoleLogger />
       <FirebaseAnalyticsSetup />
-      <ScreenshotFeedbackPrompt />
+      {process.env.G2_ACCESS_BUILD !== "1" && <ScreenshotFeedbackPrompt />}
       <CapsuleMenu forceShow={false} />
       <Compositor />
       <QrScanOverlay />
