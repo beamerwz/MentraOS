@@ -28,9 +28,6 @@ async function ensureBundledCaptionsInstalled(): Promise<void> {
   })
   if (result.is_error()) throw result.error
 
-  // Captions must have the local speech model before launch. Register the same
-  // gate used by the normal host so the model manager remains authoritative.
-  appRegistry.setRequiresLocalSttModel(CAPTIONS_PACKAGE, true)
   await engine.miniapps.refresh()
   console.log("G2LABS_CAPTIONS installed and projected into launcher")
 }
