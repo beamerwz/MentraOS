@@ -88,7 +88,16 @@ jobs:
             exit 1
           fi
           WORKSPACE_NAME="$(basename "$WORKSPACE")"
-          SCHEME="$(xcodebuild -workspace "$WORKSPACE_NAME" -list -json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["workspace"]["schemes"][0])')"
+          # Expo names the application scheme after the generated workspace.
+          # Do not select schemes[0]: CocoaPods schemes (for example BitByteData)
+          # can sort before the actual app and produce no .app.
+          SCHEME="${WORKSPACE_NAME%.xcworkspace}"
+          AVAILABLE_SCHEMES="$(xcodebuild -workspace "$WORKSPACE_NAME" -list -json)"
+          echo "$AVAILABLE_SCHEMES"
+          if ! echo "$AVAILABLE_SCHEMES" | python3 -c 'import json,sys; d=json.load(sys.stdin); target=sys.argv[1]; sys.exit(0 if target in d["workspace"]["schemes"] else 1)' "$SCHEME"; then
+            echo "::error::Expected app scheme $SCHEME was not generated"
+            exit 1
+          fi
           echo "Building workspace=$WORKSPACE_NAME scheme=$SCHEME"
           xcodebuild \
             -workspace "$WORKSPACE_NAME" \
