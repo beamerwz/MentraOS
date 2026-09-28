@@ -70,6 +70,9 @@ jobs:
       - name: Setup Sherpa ONNX
         working-directory: mobile
         run: |
+          # The repository baseline carries Sherpa 1.13.2, which predates
+          # multilingual Nemotron 3.5 support (#3671 / v1.13.3).
+          rm -rf modules/bluetooth-sdk/ios/Packages/SherpaOnnx/sherpa-onnx.xcframework
           chmod +x scripts/setup-sherpa-onnx-optional.sh
           ./scripts/setup-sherpa-onnx-optional.sh
 
