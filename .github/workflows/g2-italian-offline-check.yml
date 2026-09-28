@@ -9,6 +9,9 @@ on:
       - ".github/workflows/g2-italian-offline-check.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   typecheck:
     runs-on: ubuntu-latest
