@@ -78,19 +78,14 @@ class STTTools {
         UserDefaults.standard.synchronize()
     }
 
-    /// The multilingual archives were replaced in place on 2026-07-09. A model
-    /// downloaded before then has the same path and filenames but an incompatible
-    /// encoder cache shape, so reject it before DeviceManager constructs Sherpa.
+    /// Experimental Nemotron selections are never restored on cold start.
+    /// This prevents an incompatible native model from trapping the app in an
+    /// ONNX Runtime crash loop before Swift recovery can run.
     static func recoverPersistedModelBeforeInitialization() {
-        guard let modelPath = UserDefaults.standard.string(forKey: "STTModelPath"),
-              let modelID = modelPath.split(separator: "/").last.map(String.init),
-              let expectedDigest = nemotronDigests[modelID]
-        else { return }
-
-        let markerPath = (modelPath as NSString).appendingPathComponent(nemotronMarker)
-        let marker = try? String(contentsOfFile: markerPath, encoding: .utf8)
-        if marker?.trimmingCharacters(in: .whitespacesAndNewlines) != expectedDigest {
-            _ = fallbackToItalianBuiltIn(reason: "unverified Nemotron export")
+        guard let modelPath = UserDefaults.standard.string(forKey: "STTModelPath") else { return }
+        let modelID = modelPath.split(separator: "/").last.map(String.init) ?? ""
+        if modelID.hasPrefix("nemotron_") {
+            _ = forceItalianBuiltIn(reason: "experimental Nemotron is never restored on cold start")
         }
     }
 
