@@ -292,6 +292,16 @@ class SherpaOnnxRecognizer {
         return SherpaOnnxIsOnlineStreamReady(recognizer, stream) != 0
     }
 
+    /// Set a per-stream model option before feeding audio. Nemotron 3.5 multilingual
+    /// uses this to select the transcription locale (for example, it-IT).
+    func setOption(key: String, value: String) {
+        key.withCString { keyPtr in
+            value.withCString { valuePtr in
+                SherpaOnnxOnlineStreamSetOption(stream, keyPtr, valuePtr)
+            }
+        }
+    }
+
     /// If there are enough number of feature frames, it invokes the neural
     /// network computation and decoding. Otherwise, it is a no-op.
     func decode() {
