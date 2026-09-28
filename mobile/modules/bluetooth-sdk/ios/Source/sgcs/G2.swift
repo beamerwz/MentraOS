@@ -2833,6 +2833,8 @@ class G2: NSObject, SGCManager {
     /// and `imgAckBox` is never clobbered. A failed image send leaves the container dirty for the
     /// next cycle; if its bytes changed mid-send, the flag stays set so the newer image is sent next.
     private func reconcileDisplay() async {
+        let g2TraceReconcileNs = DispatchTime.now().uptimeNanoseconds
+        Bridge.log("G2LAB_TRACE T8_RECONCILE ns=\(g2TraceReconcileNs) pageCreated=\(pageCreated)")
         // Page is dead but content is waiting (e.g. captions kept arriving while iOS had us
         // suspended and the firmware tore the session down). Rebuild the page ONCE here — the
         // reconcile loop is coalesced (1-deep signal buffer), so a burst of buffered sendText
@@ -2869,6 +2871,8 @@ class G2: NSObject, SGCManager {
                 contentLength: Int32(container.content.utf8.count),
                 content: container.content
             )
+            let g2TraceBleNs = DispatchTime.now().uptimeNanoseconds
+            Bridge.log("G2LAB_TRACE T9_BLE_ENQUEUE ns=\(g2TraceBleNs) container=\(container.id) bytes=\(container.content.utf8.count) reconcileMs=\(String(format: "%.3f", Double(g2TraceBleNs - g2TraceReconcileNs) / 1_000_000.0))")
             sendEvenHubCommand(msg)
             textContainers[i].pendingSends -= 1
         }
