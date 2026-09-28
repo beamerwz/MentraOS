@@ -209,6 +209,13 @@ class SherpaOnnxTranscriber {
                 throw NSError(domain: "SherpaOnnxTranscriber", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to create recognizer"])
             }
 
+            // Nemotron 3.5 multilingual selects language per stream. Applying this
+            // to transducer streams is harmless for models that do not consume it.
+            if let languageCode = UserDefaults.standard.string(forKey: "STTModelLanguageCode"), !languageCode.isEmpty {
+                recognizer?.setOption(key: "language", value: languageCode)
+                Bridge.log("Sherpa stream language option: \(languageCode)")
+            }
+
             startProcessingTask()
             isRunning = true
 
