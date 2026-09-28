@@ -5,6 +5,7 @@ on:
     branches:
       - g2-italian-offline-3.1.1
       - g2-labs-latency-trace
+      - g2-labs-phase1
     paths:
       - "mobile/**"
       - ".github/workflows/g2-access-ios-unsigned.yml"
