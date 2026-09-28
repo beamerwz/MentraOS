@@ -1,6 +1,7 @@
 import {useFocusEffect} from "@react-navigation/native"
 import {useCallback, useEffect, useRef} from "react"
-import {Platform, ScrollView, View} from "react-native"
+import {Platform, Pressable, ScrollView, Text as RNText, View} from "react-native"
+import {router} from "expo-router"
 import {LinearGradient} from "expo-linear-gradient"
 import MaskedView from "@react-native-masked-view/masked-view"
 
@@ -85,6 +86,10 @@ export default function Homepage() {
           <ControllerStatus />
         </Group>
         <View className="h-2" />
+        <Pressable onPress={() => router.push("/model-lab")} style={{backgroundColor:"#171020",borderWidth:1,borderColor:"#6f3fa8",borderRadius:18,padding:16,marginBottom:14}}>
+          <RNText style={{color:"white",fontSize:17,fontWeight:"800"}}>G2 MODEL LAB</RNText>
+          <RNText style={{color:"#b49bcf",marginTop:4}}>Italian · Nemotron 80/160 ms · Custom Model</RNText>
+        </Pressable>
         <AppsGrid />
       </>
     )
