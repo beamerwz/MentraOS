@@ -1,16 +1,44 @@
+import {Asset} from "expo-asset"
 import {engine} from "@mentra/engine"
-import {offlineSpeechModelService} from "@mentra/engine-host-internal"
+import {appRegistry, offlineSpeechModelService} from "@mentra/engine-host-internal"
+
+const CAPTIONS_PACKAGE = "com.mentra.captions"
+const CAPTIONS_BUNDLE = require("@assets/miniapps/com.mentra.captions-1.0.16.zip")
 
 /**
- * Minimal local/OEM bootstrap for G2 LABS.
- *
- * Pairing cannot run against an unstarted engine: the original Mentra boot
- * called MantleManager.init() after auth, which configured + started the engine
- * before any scan. G2 LABS has no account gate, so reproduce that lifecycle
- * locally with a deliberately unavailable cloud token. Bluetooth pairing,
- * native device-store hydration, status projection, device event routing,
- * offline STT and the local miniapp/display runtime are still initialized by
- * engine.start().
+ * Install the proven Captions bundle shipped inside the IPA without contacting
+ * the Mentra Store/cloud registry. This is the G2 LABS built-in app path.
+ */
+async function ensureBundledCaptionsInstalled(): Promise<void> {
+  const installed = appRegistry.getInstalledVersions(CAPTIONS_PACKAGE)
+  if (installed.includes("1.0.16")) {
+    console.log("G2LABS_CAPTIONS bundled captions already installed")
+    await engine.miniapps.refresh()
+    return
+  }
+
+  console.log("G2LABS_CAPTIONS materializing bundled asset")
+  const asset = Asset.fromModule(CAPTIONS_BUNDLE)
+  await asset.downloadAsync()
+  const uri = asset.localUri ?? asset.uri
+  if (!uri) throw new Error("Bundled Captions asset has no local URI")
+
+  const result = await appRegistry.installFromLocalZip(uri, {
+    releaseIdentity: {source: "bundled_asset", releaseId: "g2-labs-captions-1.0.16"},
+  })
+  if (result.is_error()) throw result.error
+
+  // Captions must have the local speech model before launch. Register the same
+  // gate used by the normal host so the model manager remains authoritative.
+  appRegistry.setRequiresLocalSttModel(CAPTIONS_PACKAGE, true)
+  await engine.miniapps.refresh()
+  console.log("G2LABS_CAPTIONS installed and projected into launcher")
+}
+
+/**
+ * Account-free G2 LABS runtime bootstrap.
+ * Keeps the proven G2 transport/pairing stack and local speech model manager,
+ * while replacing cloud miniapp discovery with our bundled Captions app.
  */
 let bootPromise: Promise<void> | null = null
 
@@ -28,16 +56,14 @@ export function ensureG2LabsEngineStarted(): Promise<void> {
       },
       config: {
         oemId: "g2-labs",
-        // G2 LC3 frames are 40 bytes in the existing engine contract.
         audioFrameSizeBytes: 40,
       },
     })
 
     await engine.start()
-
-    // Keep the proven downloadable/offline language model manager alive even
-    // though G2 LABS intentionally does not initialize the Mentra account UI.
     offlineSpeechModelService.startBackgroundDownloads()
+
+    await ensureBundledCaptionsInstalled()
 
     console.log("G2LABS_BOOTSTRAP ready")
   })().catch((error) => {
