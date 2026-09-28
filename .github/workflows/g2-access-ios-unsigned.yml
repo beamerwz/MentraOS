@@ -80,10 +80,19 @@ jobs:
       - name: Build unsigned device app
         working-directory: mobile/ios
         run: |
-          set -o pipefail
+          set -euo pipefail
+          WORKSPACE="$(find . -maxdepth 1 -name '*.xcworkspace' -type d | head -1)"
+          if [ -z "$WORKSPACE" ]; then
+            echo "::error::No Xcode workspace generated"
+            ls -la
+            exit 1
+          fi
+          WORKSPACE_NAME="$(basename "$WORKSPACE")"
+          SCHEME="$(xcodebuild -workspace "$WORKSPACE_NAME" -list -json | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["workspace"]["schemes"][0])')"
+          echo "Building workspace=$WORKSPACE_NAME scheme=$SCHEME"
           xcodebuild \
-            -workspace Mentra.xcworkspace \
-            -scheme Mentra \
+            -workspace "$WORKSPACE_NAME" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -derivedDataPath build-g2-access \
@@ -91,8 +100,8 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" \
-            PRODUCT_BUNDLE_IDENTIFIER="com.beamerwz.g2access" \
-            INFOPLIST_KEY_CFBundleDisplayName="G2 Access" \
+            PRODUCT_BUNDLE_IDENTIFIER="com.beamerwz.g2labs" \
+            INFOPLIST_KEY_CFBundleDisplayName="G2 LABS" \
             build | tee ../../g2-access-xcodebuild.log
 
       - name: Package unsigned IPA
@@ -109,15 +118,15 @@ jobs:
           mkdir Payload
           cp -R "$APP" Payload/
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "Payload/$(basename "$APP")/Info.plist"
-          zip -qry G2_ACCESS_Mentra_3.1.1_Italian_unsigned.ipa Payload
+          zip -qry G2_LABS_Phase1_unsigned.ipa Payload
           rm -rf Payload
-          ls -lh G2_ACCESS_Mentra_3.1.1_Italian_unsigned.ipa
+          ls -lh G2_LABS_Phase1_unsigned.ipa
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: G2_ACCESS_Mentra_3.1.1_Italian_unsigned_IPA
-          path: mobile/G2_ACCESS_Mentra_3.1.1_Italian_unsigned.ipa
+          name: G2_LABS_Phase1_unsigned_IPA
+          path: mobile/G2_LABS_Phase1_unsigned.ipa
           if-no-files-found: error
           retention-days: 14
 
