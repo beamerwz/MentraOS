@@ -1,23 +1,19 @@
 import {useLocalSearchParams} from "expo-router"
 import {useEffect} from "react"
-import {Platform, TouchableOpacity, View} from "react-native"
+import {TouchableOpacity, View} from "react-native"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 
 import {Button, Icon, Text, Screen} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
-import AppleIcon from "assets/icons/component/AppleIcon"
-import GoogleIcon from "assets/icons/component/GoogleIcon"
-import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
+import {G2LabsLogo} from "@/components/brands/G2LabsLogo"
 
 export default function LoginScreen() {
   const {push, replace, setAnimation} = useNavigationStore.getState()
-  const [isChina] = useSetting(SETTINGS.china_deployment.key)
   const {authError} = useLocalSearchParams<{authError?: string}>()
   const {theme} = useAppTheme()
 
@@ -40,25 +36,6 @@ export default function LoginScreen() {
     // await WebBrowser.openBrowserAsync(url)
   }
 
-  const handleGoogleSignIn = async () => {
-    const res = await mentraAuth.googleSignIn()
-    if (res.is_error()) {
-      return
-    }
-    const url = res.value
-    handleWebLogin(url)
-  }
-
-  const handleAppleSignIn = async () => {
-    const res = await mentraAuth.appleSignIn()
-    if (res.is_error()) {
-      console.error("Apple sign in failed:", res.error)
-      return
-    }
-    const url = res.value
-    handleWebLogin(url)
-  }
-
   const handleSignup = async () => {
     setAnimation("simple_push")
     await new Promise((resolve) => setTimeout(resolve, 1))
@@ -70,16 +47,16 @@ export default function LoginScreen() {
       <View className="flex-1">
         <View className="flex-1 justify-center p-4">
           <View className="items-center justify-center mb-4">
-            <MentraLogoStandalone width={100} height={48} />
+            <G2LabsLogo width={86} height={86} />
           </View>
 
           <Text
-            text="Mentra"
+            text="G2 LABS"
             className="text-[46px] text-primary-foreground text-secondary-foreground text-center mb-2 pt-8 pb-4"
           />
 
-          <Text tx="login:subtitle" className="text-base text-secondary-foreground text-center text-xl mb-4">
-            {translate("login:subtitle")}
+          <Text className="text-base text-secondary-foreground text-center text-xl mb-4">
+            Fast, private captions for your G2.
           </Text>
 
           <View className="mb-4">
@@ -90,20 +67,6 @@ export default function LoginScreen() {
                 onPress={handleSignup}
                 LeftAccessory={() => <Icon name="mail" size={20} color={theme.colors.background} />}
               />
-
-              {!isChina && (
-                <Button
-                  preset="secondary"
-                  text={translate("login:continueWithGoogle")}
-                  onPress={handleGoogleSignIn}
-                  LeftAccessory={() => <GoogleIcon />}
-                />
-              )}
-
-              {Platform.OS === "ios" && !isChina && (
-                <Button
-                  preset="secondary"
-                  text={translate("login:continueWithApple")}
                   onPress={handleAppleSignIn}
                   LeftAccessory={() => <AppleIcon color={theme.colors.foreground} />}
                 />
