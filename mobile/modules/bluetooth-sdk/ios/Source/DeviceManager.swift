@@ -414,6 +414,8 @@ struct ViewState {
      * This matches Android behavior - glasses forward raw LC3, DeviceManager handles encoding.
      */
     func handleGlassesMicData(_ lc3Data: Data, _ frameSize: Int = 20, sequenceNumber: Int? = nil) {
+        let g2TraceLc3Ns = DispatchTime.now().uptimeNanoseconds
+        Bridge.log("G2LAB_TRACE T0_LC3 ns=\(g2TraceLc3Ns) bytes=\(lc3Data.count) frameMs=\(frameSize) seq=\(sequenceNumber.map(String.init) ?? "-")")
         recordLc3Packet(sequenceNumber: sequenceNumber)
         guard let lc3Converter = lc3Converter else {
             Bridge.log("MAN: LC3 converter not initialized")
@@ -434,6 +436,10 @@ struct ViewState {
             return
         }
         // Forward to handlePcm which handles SDK audio events and encoding.
+        let g2TracePcmNs = DispatchTime.now().uptimeNanoseconds
+        let g2TraceSamples = pcmData.count / MemoryLayout<Int16>.size
+        let g2TracePcmMs = Double(g2TraceSamples) * 1000.0 / 16_000.0
+        Bridge.log("G2LAB_TRACE T1_PCM ns=\(g2TracePcmNs) bytes=\(pcmData.count) samples=\(g2TraceSamples) audioMs=\(String(format: "%.2f", g2TracePcmMs)) decodeMs=\(String(format: "%.3f", Double(g2TracePcmNs - g2TraceLc3Ns) / 1_000_000.0))")
         lastPcmProducedAt = nowMs()
         handlePcm(pcmData)
     }
@@ -502,6 +508,8 @@ struct ViewState {
         // Send PCM to local transcriber.
 #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
         if shouldSendTranscript || localSttFallbackActive {
+            let g2TraceSttNs = DispatchTime.now().uptimeNanoseconds
+            Bridge.log("G2LAB_TRACE T2_STT_INGEST ns=\(g2TraceSttNs) bytes=\(pcmData.count)")
             transcriber?.acceptAudio(pcm16le: pcmData)
         }
 #endif
