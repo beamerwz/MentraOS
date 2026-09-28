@@ -36,7 +36,7 @@ if [[ ! -d "ios" ]]; then
   exit 1
 fi
 
-IOS_PKG_DIR="ios/Packages/SherpaOnnx"
+IOS_PKG_DIR="modules/bluetooth-sdk/ios/Packages/SherpaOnnx"
 IOS_MODEL_DIR="$IOS_PKG_DIR/Model"
 TMP_DIR=".sherpa_tmp"
 
@@ -45,7 +45,7 @@ mkdir -p "$IOS_MODEL_DIR" "$TMP_DIR"
 #################################
 # 1. Download XCFramework (iOS) #
 #################################
-XCF_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.2/sherpa-onnx-v1.13.2-ios.tar.bz2"
+XCF_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.3/sherpa-onnx-v1.13.3-ios.tar.bz2"
 if [[ ! -d "$IOS_PKG_DIR/sherpa-onnx.xcframework" ]]; then
   msg "📥 Downloading Sherpa-ONNX XCFramework …"
   curl -L "$XCF_URL" -o "$TMP_DIR/xcf.tar.bz2"
