@@ -53,7 +53,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, spaces, or underscores.`,
     )
   }
-  const appName = isValidVariant ? variantName : variant.appName
+  const isG2AccessBuild = process.env.G2_ACCESS_BUILD === "1"
+  const appName = isG2AccessBuild ? "G2 LABS" : isValidVariant ? variantName : variant.appName
   const baseId = variant.packageName
   // replace non-alphanumeric characters with underscores:
   const normalizedVariantId = variantName?.toLowerCase().replace(/[^a-zA-Z0-9_]/g, "")
@@ -74,7 +75,6 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   // Our accessibility build intentionally omits phone navigation so the fork can
   // be built on stock GitHub-hosted macOS runners without Mentra's private
   // Mapbox Downloads token. G2 Bluetooth, audio, HUD and offline STT are untouched.
-  const isG2AccessBuild = process.env.G2_ACCESS_BUILD === "1"
   const mapboxAccessToken = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? ""
   if (!mapboxAccessToken && !isChinaBuild && !isG2AccessBuild) {
     const isCiOrEas =
@@ -96,12 +96,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   return {
     ...config,
     name: appName,
-    slug: "Mentra",
+    slug: isG2AccessBuild ? "g2-labs" : "Mentra",
     // Coordinated prereleases expose their full identity (for example,
     // 3.1.0-beta.57) to shipped JavaScript while stores retain the plain
     // marketing version so the exact tested binary can be promoted.
     version: process.env.MENTRAOS_NATIVE_MARKETING_VERSION || familyBaseVersion,
-    scheme: "com.mentra",
+    scheme: isG2AccessBuild ? "g2labs" : "com.mentra",
     orientation: "portrait",
     userInterfaceStyle: "automatic",
     icon: variant.icon,
@@ -170,11 +170,17 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       infoPlist: {
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
         NSMicrophoneUsageDescription:
-          "The Mentra App uses your phone microphone for features such as live captions, translation, notes, and video recording when they use phone audio. You can connect glasses and use other features without allowing microphone access.",
-        NSBluetoothAlwaysUsageDescription: "This app needs access to your Bluetooth to connect to your glasses.",
+          isG2AccessBuild
+            ? "G2 LABS uses microphone audio for live captions when phone audio is selected."
+            : "The Mentra App uses your phone microphone for features such as live captions, translation, notes, and video recording when they use phone audio. You can connect glasses and use other features without allowing microphone access.",
+        NSBluetoothAlwaysUsageDescription: isG2AccessBuild
+          ? "G2 LABS uses Bluetooth to pair with and connect to your G2 glasses."
+          : "This app needs access to your Bluetooth to connect to your glasses.",
         NSLocationWhenInUseUsageDescription:
           "Mentra uses your location to display nearby points of interest, weather updates, and navigation directions on your smart glasses. For example, when you're walking, the app can show restaurants within 100 meters or provide turn-by-turn directions to your destination on your glasses display.",
-        NSBluetoothPeripheralUsageDescription: "This app needs access to your Bluetooth to connect to your glasses.",
+        NSBluetoothPeripheralUsageDescription: isG2AccessBuild
+          ? "G2 LABS uses Bluetooth to pair with and connect to your G2 glasses."
+          : "This app needs access to your Bluetooth to connect to your glasses.",
         NSCalendarsUsageDescription:
           "Mentra accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
         NSCalendarsFullAccessUsageDescription:
