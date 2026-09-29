@@ -20,7 +20,7 @@ struct PairingView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("G2 LABS")
                             .font(.system(size: 48, weight: .black, design: .rounded))
-                        Text("NATIVE PAIRING")
+                        Text("MENTRA BLUETOOTH")
                             .font(.system(size: 18, weight: .bold, design: .rounded))
                             .foregroundStyle(.purple)
                     }
@@ -60,8 +60,8 @@ struct PairingView: View {
                                             Text(device.serial)
                                                 .foregroundStyle(.primary)
                                                 .font(.headline)
-                                            Text(device.complete ? "Left + right ready" : "Waiting for both lenses")
-                                                .foregroundStyle(device.complete ? .green : .orange)
+                                            Text("Mentra pairing ready")
+                                                .foregroundStyle(.green)
                                                 .font(.caption)
                                         }
 
@@ -72,7 +72,6 @@ struct PairingView: View {
                                     .padding(18)
                                     .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
                                 }
-                                .disabled(!device.complete)
                             }
                         }
                     }
@@ -80,7 +79,7 @@ struct PairingView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("How pairing works", systemImage: "bolt.horizontal.circle")
                             .font(.headline)
-                        Text("G2 LABS finds both physical lenses, connects LEFT + RIGHT, authenticates both sides, sets the pipe role, syncs time, then marks the glasses ready.")
+                        Text("Mentra Bluetooth owns scanning, both-lens pairing, authentication, reconnect, EvenHub page recovery and the G2 microphone lifecycle. G2 LABS only handles local model processing.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -120,7 +119,7 @@ struct ConnectionView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("DIRECT G2") {
+                Section("MENTRA G2 TRANSPORT") {
                     LabeledContent("Bluetooth", value: g2.bluetoothState)
                     LabeledContent("Serial", value: g2.connectedSerial ?? "—")
                     LabeledContent("Connected", value: g2.connectedName ?? "No")
@@ -292,7 +291,7 @@ struct DiagnosticsView: View {
                     DiagnosticRow(
                         "G2 mic session",
                         ok: g2.micArmed,
-                        detail: g2.micArmed ? "EvenHub page live • audio OFF→ON sent" : "Waiting for page + mic arm"
+                        detail: g2.micArmed ? "Mentra SDK mic session active • auto-recovery enabled" : "Waiting for Mentra mic session"
                     )
                     DiagnosticRow(
                         "PCM decode",
