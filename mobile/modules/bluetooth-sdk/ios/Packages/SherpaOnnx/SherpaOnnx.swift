@@ -372,26 +372,16 @@ class SherpaOnnxRecognizer {
         }
     }
 
-    /// Executes at least one encoder/decoder pass before a model is accepted.
-    /// Feed staged audio because streaming models have different chunk requirements.
+    /// Executes the first encoder/decoder pass before a model can be persisted.
     func smokeTest(sampleRate: Int = 16000) throws {
-        let chunkSamples = max(1, sampleRate / 5) // 200 ms
-        let silence = [Float](repeating: 0, count: chunkSamples)
+        try acceptWaveform(samples: [Float](repeating: 0, count: sampleRate / 2), sampleRate: sampleRate)
         var decodeCount = 0
-
-        for _ in 0..<20 { // up to 4 seconds
-            try acceptWaveform(samples: silence, sampleRate: sampleRate)
-            while try isReady() {
-                try decode()
-                decodeCount += 1
-            }
-            if decodeCount > 0 { break }
+        while try isReady() {
+            try decode()
+            decodeCount += 1
         }
-
         if decodeCount == 0 {
-            throw SherpaOnnxRecognizerError.native(
-                "Smoke test did not reach the encoder after 4.0 s of staged audio"
-            )
+            throw SherpaOnnxRecognizerError.native("Smoke test did not reach the encoder")
         }
         try reset()
     }
@@ -2039,14 +2029,10 @@ func sherpaOnnxOfflineSpeechDenoiserGtcrnModelConfig(model: String = "")
     return SherpaOnnxOfflineSpeechDenoiserGtcrnModelConfig(model: toCPointer(model))
 }
 
-func sherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig(
-    model: String = "",
-    attenuationLimitDb: Float = 0
-) -> SherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig {
-    return SherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig(
-        model: toCPointer(model),
-        attenuation_limit_db: attenuationLimitDb
-    )
+func sherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig(model: String = "")
+    -> SherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig
+{
+    return SherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig(model: toCPointer(model))
 }
 
 func sherpaOnnxOfflineSpeechDenoiserModelConfig(
