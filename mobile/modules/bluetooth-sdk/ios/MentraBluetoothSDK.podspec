@@ -25,10 +25,7 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore' if include_expo_adapter
   s.dependency 'SWCompression', '~> 4.8.0'
   s.dependency 'SwiftProtobuf', '~> 1.0'
-  # Sherpa-ONNX v1.13.5's iOS build is compiled against ONNX Runtime 1.27.1.
-  # Vendor that exact static ORT XCFramework once. Do not add onnxruntime-objc:
-  # an older CocoaPods ORT caused the Global::Api ABI collision at
-  # SessionOptions::SetIntraOpNumThreads (EXC_BAD_ACCESS 0xC0).
+  s.dependency 'onnxruntime-objc', '1.18.0'
   s.dependency 'UltraliteSDK'
 
   # Swift/Objective-C compatibility
@@ -37,15 +34,7 @@ Pod::Spec.new do |s|
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
     'CLANG_CXX_LIBRARY' => 'libc++',
     'GCC_ENABLE_CPP_EXCEPTIONS' => 'YES',
-    'SWIFT_INCLUDE_PATHS' => '$(PODS_TARGET_SRCROOT)/Packages/libbz2',
-    'HEADER_SEARCH_PATHS' => '$(inherited) "$(PODS_TARGET_SRCROOT)/Packages/SherpaOnnx/CompatHeaders"'
-  }
-
-  # SherpaOnnxSafeBridge.h is part of this pod's public Clang module. When the
-  # application imports MentraBluetoothSDK, Clang reparses that public header
-  # in the user target, so the compatibility C header must also be visible there.
-  s.user_target_xcconfig = {
-    'HEADER_SEARCH_PATHS' => '$(inherited) "$(PROJECT_DIR)/../modules/bluetooth-sdk/ios/Packages/SherpaOnnx/CompatHeaders"'
+    'SWIFT_INCLUDE_PATHS' => '$(PODS_TARGET_SRCROOT)/Packages/libbz2'
   }
 
   # iOS frameworks required by Bluetooth SDK
@@ -57,10 +46,7 @@ Pod::Spec.new do |s|
   s.library = 'bz2'
 
   # Vendored frameworks
-  s.vendored_frameworks = [
-    'Packages/SherpaOnnx/sherpa-onnx.xcframework',
-    'Packages/SherpaOnnx/onnxruntime.xcframework'
-  ]
+  s.vendored_frameworks = 'Packages/SherpaOnnx/sherpa-onnx.xcframework'
 
   s.resource_bundles = {
     'BluetoothSDKPrivacy' => ['Source/PrivacyInfo.xcprivacy']
