@@ -1,0 +1,92 @@
+name: G2 LABS Standalone iOS
+
+on:
+  push:
+    branches:
+      - g2labs-standalone-v1
+    paths:
+      - "standalone/G2LabsStandalone/**"
+      - ".github/workflows/g2labs-standalone-ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: g2labs-standalone-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk
+        run: |
+          rm -rf "$HOME/Library/Android/sdk" "$HOME/.gradle" "$HOME/.android" 2>/dev/null || true
+          df -h /
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Prepare standalone runtime
+        working-directory: standalone/G2LabsStandalone
+        run: |
+          chmod +x scripts/setup_runtime.sh
+          ./scripts/setup_runtime.sh
+
+      - name: Generate Xcode project
+        working-directory: standalone/G2LabsStandalone
+        run: xcodegen generate
+
+      - name: Resolve Swift packages
+        working-directory: standalone/G2LabsStandalone
+        run: xcodebuild -resolvePackageDependencies -project G2LABSStandalone.xcodeproj -scheme G2LABSStandalone
+
+      - name: Build unsigned device app
+        working-directory: standalone/G2LabsStandalone
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project G2LABSStandalone.xcodeproj \
+            -scheme G2LABSStandalone \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build | tee g2labs-standalone-xcodebuild.log
+
+      - name: Package unsigned IPA
+        working-directory: standalone/G2LabsStandalone
+        run: |
+          set -euo pipefail
+          APP="$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -1)"
+          test -n "$APP"
+          rm -rf Payload
+          mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry G2_LABS_Standalone_unsigned.ipa Payload
+          rm -rf Payload
+          ls -lh G2_LABS_Standalone_unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: G2_LABS_Standalone_unsigned_IPA
+          path: standalone/G2LabsStandalone/G2_LABS_Standalone_unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Xcode log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: G2_LABS_Standalone_build_log
+          path: standalone/G2LabsStandalone/g2labs-standalone-xcodebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
