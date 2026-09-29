@@ -86,7 +86,7 @@ final class NativeASRManager: ObservableObject {
                     var modelConfig = sherpaOnnxOnlineModelConfig(
                         tokens: tokens.path,
                         transducer: transducer,
-                        numThreads: 2,
+                        numThreads: 1,
                         provider: "cpu"
                     )
                     var feat = sherpaOnnxFeatureConfig(sampleRate: 16000, featureDim: 80)
@@ -112,7 +112,7 @@ final class NativeASRManager: ObservableObject {
                     var nemoCtc = sherpaOnnxOnlineNemoCtcModelConfig(model: model.path)
                     var modelConfig = sherpaOnnxOnlineModelConfig(
                         tokens: tokens.path,
-                        numThreads: 2,
+                        numThreads: 1,
                         provider: "cpu",
                         nemoCtc: nemoCtc
                     )
@@ -132,10 +132,18 @@ final class NativeASRManager: ObservableObject {
                                   userInfo: [NSLocalizedDescriptionKey: "\(family.rawValue) import is recognized, but its runtime adapter is not wired yet"])
                 }
 
+                // Multilingual Nemotron's language is a per-stream option and
+                // must be set before feeding the smoke-test waveform as well as
+                // on the fresh live stream created afterwards.
+                if family == .nemotron {
+                    try nextRecognizer.setOption(key: "language", value: language)
+                }
+
                 try nextRecognizer.smokeTest(sampleRate: 16000)
                 try nextRecognizer.recreateStream()
+
                 if family == .nemotron {
-                    try? nextRecognizer.setOption(key: "language", value: language)
+                    try nextRecognizer.setOption(key: "language", value: language)
                 }
 
                 guard g == self.generation else { return }
@@ -188,7 +196,7 @@ final class NativeASRManager: ObservableObject {
                     try recognizer.reset()
                     if case .ready = self.state {
                         // Set language again on the freshly reset stream for Nemotron.
-                        try? recognizer.setOption(key: "language", value: "it")
+                        try? recognizer.setOption(key: "language", value: "it-IT")
                     }
                     self.lastPartial = ""
                 } else if !result.isEmpty && result != self.lastPartial {
