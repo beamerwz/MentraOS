@@ -245,16 +245,22 @@ struct ModelsView: View {
             }
             .navigationTitle("Models")
         }
-        .fileImporter(
-            isPresented: $importing,
-            allowedContentTypes: [.item],
-            allowsMultipleSelection: false
-        ) { result in
-            if case .success(let urls) = result, let url = urls.first {
-                registry.importModel(url)
-            } else if case .failure(let error) = result {
-                registry.importMessage = "IMPORT ERROR: \(error.localizedDescription)"
+        .sheet(isPresented: $importing, onDismiss: {
+            g2.applicationDidBecomeActive()
+        }) {
+            NativeModelDocumentPicker { result in
+                importing = false
+                switch result {
+                case .success(let url):
+                    registry.importModel(url)
+                case .failure(let error):
+                    registry.importMessage = "IMPORT ERROR: \(error.localizedDescription)"
+                }
             }
+            .ignoresSafeArea()
+        }
+        .onAppear {
+            g2.ensureRuntimeAlive(reason: "Models tab opened")
         }
     }
 }
