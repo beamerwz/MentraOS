@@ -148,6 +148,31 @@ enum G2NativeProtocol {
         return root.data
     }
 
+    /// Mentra's G2 driver treats the EvenHub page as a separate lifecycle
+    /// from the BLE link. Firmware can tear the page down while CoreBluetooth
+    /// still says both lenses are connected; when that happens the microphone
+    /// stream dies with the page.
+    static func evenHubPageWasShutdown(_ payload: Data) -> Bool {
+        var reader = PBReader(payload)
+        let fields = reader.fields()
+
+        if let command = fields[1] as? Int32, command == 9 || command == 10 {
+            return true
+        }
+
+        // Mentra also treats a text/page response errorCode=9 as page shutdown.
+        for responseField in [4, 6, 8, 10] {
+            guard let nested = fields[responseField] as? Data else { continue }
+            var nestedReader = PBReader(nested)
+            let response = nestedReader.fields()
+            if let errorCode = response[1] as? Int32, errorCode == 9 {
+                return true
+            }
+        }
+
+        return false
+    }
+
     static func parseAuthResponse(_ payload: Data) -> Bool? {
         var reader = PBReader(payload)
         let fields = reader.fields()
