@@ -28,7 +28,7 @@ export default function G2ModelLab() {
         await STT.downloadModel(code,p=>setProgress(p.percentage))
       }
       await STT.activateLanguage(code)
-      setCurrent(code); setStatus("Active")
+      setCurrent(code); setStatus("Selected · reopen G2 LABS once to load safely")
     }catch(e:any){setStatus(e?.message??"Model activation failed")}finally{setBusy(null);setProgress(0)}
   }
 
@@ -43,7 +43,7 @@ export default function G2ModelLab() {
       const source=decodeURIComponent(asset.uri.replace("file://",""))
       await RNFS.copyFile(source,temp)
       await STT.importCustomArchive(temp,"it-IT")
-      setCurrent("custom"); setStatus(`Custom active · ${asset.name}`)
+      setCurrent("custom"); setStatus(`Custom selected · ${asset.name} · reopen G2 LABS once to load safely`)
       await RNFS.unlink(temp).catch(()=>undefined)
     }catch(e:any){setStatus(e?.message??"Custom import failed")}finally{setBusy(null)}
   }
