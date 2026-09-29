@@ -23,7 +23,6 @@ class LocalSttFallbackCoordinator {
   private static instance: LocalSttFallbackCoordinator
 
   private hasTranscriptionSubscription = false
-  private hasForceLocalSubscription = false
   private activeLanguage: string | null = null
   /**
    * Default to "cloud is up" so we never accidentally activate local STT before
@@ -84,7 +83,6 @@ class LocalSttFallbackCoordinator {
   onSubscriptionChange(hasTranscription: boolean, language: string | null, hasForceLocal = false): void {
     this.log(`onSubscriptionChange(hasTx=${hasTranscription}, lang=${language}, forceLocal=${hasForceLocal})`)
     this.hasTranscriptionSubscription = hasTranscription
-    this.hasForceLocalSubscription = hasTranscription && hasForceLocal
     this.activeLanguage = hasTranscription ? language : null
     void this.reconcile()
   }
