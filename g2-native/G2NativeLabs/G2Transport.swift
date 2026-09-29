@@ -391,7 +391,10 @@ final class G2Transport: NSObject, ObservableObject {
                 toRight: true
             )
 
-            if !micArmed {
+            if !micArmed || staleAudio {
+                if staleAudio {
+                    log("Runtime recovery: audio stream stale; forcing fresh OFF→ON edge")
+                }
                 await send(
                     service: G2NativeProtocol.evenHubService,
                     payload: G2NativeProtocol.audioControl(enabled: false, magic: codec.nextMagic()),
@@ -408,7 +411,7 @@ final class G2Transport: NSObject, ObservableObject {
                     toRight: true
                 )
                 micArmed = true
-                log("Runtime recovered: G2 mic armed")
+                log(staleAudio ? "Runtime recovered: stale G2 audio re-armed" : "Runtime recovered: G2 mic armed")
             }
 
             let statusText: String
