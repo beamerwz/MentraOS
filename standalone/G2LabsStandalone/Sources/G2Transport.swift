@@ -198,15 +198,39 @@ final class G2Transport: NSObject, ObservableObject {
 
     private func startHeartbeat() {
         heartbeat?.invalidate()
-        heartbeat = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        heartbeat = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                var hb = ProtoWriter()
-                var root = ProtoWriter()
-                root.int32(1, 12)
-                root.int32(2, self.nextMagic())
-                root.message(14, hb.data)
-                self.send(service: 0xE0, payload: root.data, rightSide: true, reserve: true)
+
+                // Keep BOTH lenses alive, matching the proven G2 transport.
+                var evenHubHeartbeat = ProtoWriter()
+                var hubRoot = ProtoWriter()
+                hubRoot.int32(1, 12)
+                hubRoot.int32(2, self.nextMagic())
+                hubRoot.message(14, evenHubHeartbeat.data)
+                self.send(
+                    service: 0xE0,
+                    payload: hubRoot.data,
+                    rightSide: true,
+                    leftSide: true,
+                    reserve: true
+                )
+
+                // Device-settings heartbeat is separate from EvenHub heartbeat.
+                // Without both channels a lens can be reclaimed as idle.
+                var deviceHeartbeat = ProtoWriter()
+                var deviceRoot = ProtoWriter()
+                deviceRoot.int32(1, 14)
+                deviceRoot.int32(2, self.nextMagic())
+                deviceRoot.message(13, deviceHeartbeat.data)
+                self.send(
+                    service: 0x80,
+                    payload: deviceRoot.data,
+                    rightSide: true,
+                    leftSide: true,
+                    reserve: false
+                )
+                self.diagnostics.log("ble", "Heartbeat sent to both lenses")
             }
         }
     }
@@ -246,7 +270,7 @@ final class G2Transport: NSObject, ObservableObject {
 
     private func write(_ packets: [Data], peripheral: CBPeripheral, characteristic: CBCharacteristic) {
         for (i, packet) in packets.enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.004) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.006) {
                 peripheral.writeValue(packet, for: characteristic, type: .withoutResponse)
             }
         }
