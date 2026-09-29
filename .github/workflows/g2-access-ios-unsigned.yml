@@ -88,11 +88,11 @@ jobs:
             exit 1
           fi
           ORT_BIN="../modules/bluetooth-sdk/ios/Packages/SherpaOnnx/onnxruntime.xcframework/ios-arm64/onnxruntime.framework/onnxruntime"
-          test -f "$ORT_BIN" || { echo "::error::Matching ORT 1.28.2 binary missing"; exit 1; }
+          test -f "$ORT_BIN" || { echo "::error::Matching ORT 1.27.1 binary missing"; exit 1; }
           nm -gU "$ORT_BIN" > /tmp/ort-symbols.txt
-          grep -q '_OrtGetApiBase$' /tmp/ort-symbols.txt || { echo "::error::_OrtGetApiBase missing from ORT 1.28.2"; exit 1; }
-          grep -q '_OrtSessionOptionsAppendExecutionProvider_CoreML$' /tmp/ort-symbols.txt || { echo "::error::CoreML provider symbol missing from ORT 1.28.2"; exit 1; }
-          echo "OK: ABI-matched ONNX Runtime 1.28.2 symbols verified"
+          grep -q '_OrtGetApiBase$' /tmp/ort-symbols.txt || { echo "::error::_OrtGetApiBase missing from ORT 1.27.1"; exit 1; }
+          grep -q '_OrtSessionOptionsAppendExecutionProvider_CoreML$' /tmp/ort-symbols.txt || { echo "::error::CoreML provider symbol missing from ORT 1.27.1"; exit 1; }
+          echo "OK: ABI-matched ONNX Runtime 1.27.1 symbols verified"
 
       - name: Build unsigned device app
         working-directory: mobile/ios
