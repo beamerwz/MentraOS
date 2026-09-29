@@ -89,5 +89,11 @@ Pod::Spec.new do |s|
   ]
 
   # Exclude legacy Obj-C bridge files.
-  s.exclude_files = ["Source/BridgeModule.{h,m}", "Source/Bridge.m"]
+  s.exclude_files = [
+    "Source/BridgeModule.{h,m}",
+    "Source/Bridge.m",
+    # CoreObjC ships the same public header in the root and include/. CocoaPods
+    # otherwise tries to copy both into the framework Headers directory.
+    "Packages/CoreObjC/include/PcmConverter.h"
+  ]
 end
