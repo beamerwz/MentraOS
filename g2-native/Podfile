@@ -1,0 +1,10 @@
+platform :ios, '17.0'
+
+install! 'cocoapods', :deterministic_uuids => false
+
+target 'G2NativeLabs' do
+  use_frameworks! :linkage => :static
+
+  # Use the exact Mentra Bluetooth SDK source from this fork/commit.
+  pod 'MentraBluetoothSDK', :path => '../mobile/modules/bluetooth-sdk/ios'
+end
