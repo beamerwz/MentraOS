@@ -434,10 +434,53 @@ final class G2Transport: NSObject, ObservableObject {
 
     func activateModel(_ model: ASRModel, directory: URL) {
         log("Loading ASR model: \(model.name) [\(model.family.rawValue)]")
-        asr.load(modelName: model.name, directory: directory, family: model.family, language: "it")
-        Task { @MainActor in
+        asr.load(
+            modelName: model.name,
+            directory: directory,
+            family: model.family,
+            language: "it-IT"
+        )
+
+        // Model creation can be CPU/memory heavy (the 560 ms Nemotron encoder is
+        // large). Keep the already-working BLE/EvenHub session serviced while
+        // sherpa/ORT initializes on its background queue, then explicitly recover
+        // the G2 audio edge if loading caused packets to go stale.
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+
             try? await Task.sleep(nanoseconds: 300_000_000)
-            await updateCaptionOnGlasses("Loading \(model.name)…")
+            await self.updateCaptionOnGlasses("Loading \(model.name)…")
+
+            var seconds = 0
+            while case .loading = self.asr.state, seconds < 90 {
+                if seconds % 2 == 0 {
+                    await self.send(
+                        service: G2NativeProtocol.deviceSettingsService,
+                        payload: G2NativeProtocol.baseHeartbeat(magic: self.codec.nextMagic()),
+                        toLeft: true,
+                        toRight: true
+                    )
+                    await self.send(
+                        service: G2NativeProtocol.evenHubService,
+                        payload: G2NativeProtocol.evenHubHeartbeat(magic: self.codec.nextMagic()),
+                        reserve: true,
+                        toLeft: false,
+                        toRight: true
+                    )
+                }
+
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                seconds += 1
+            }
+
+            self.ensureRuntimeAlive(reason: "ASR model load finished")
+
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            if self.asr.state.isReady {
+                await self.updateCaptionOnGlasses("Listening…")
+            } else if case .failed(let message) = self.asr.state {
+                await self.updateCaptionOnGlasses("ASR error\n\(String(message.prefix(72)))")
+            }
         }
     }
 
