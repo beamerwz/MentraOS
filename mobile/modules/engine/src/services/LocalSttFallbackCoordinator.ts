@@ -108,6 +108,10 @@ class LocalSttFallbackCoordinator {
 
   private async startLocalStt(): Promise<void> {
     this.log("starting local stt")
+    // Native loads the persisted model during a clean launch. Mirror that
+    // selection back into JS before checking availability so Italian,
+    // Nemotron, and custom models are not mistaken for the default English slot.
+    await sttModelManager.getCurrentLanguageFromPreferences()
     const modelAvailable = await sttModelManager.isModelAvailable()
     if (!modelAvailable) {
       this.log("local stt model is not available yet — skipping activation")
