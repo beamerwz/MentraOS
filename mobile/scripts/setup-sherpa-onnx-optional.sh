@@ -38,8 +38,6 @@ fi
 
 IOS_PKG_DIR="modules/bluetooth-sdk/ios/Packages/SherpaOnnx"
 IOS_MODEL_DIR="$IOS_PKG_DIR/Model"
-ORT_VERSION="1.27.1"
-ORT_XCF_DIR="$IOS_PKG_DIR/onnxruntime.xcframework"
 TMP_DIR=".sherpa_tmp"
 
 mkdir -p "$IOS_MODEL_DIR" "$TMP_DIR"
@@ -47,61 +45,19 @@ mkdir -p "$IOS_MODEL_DIR" "$TMP_DIR"
 #################################
 # 1. Download XCFramework (iOS) #
 #################################
-XCF_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/xcframework/sherpa-onnx-v1.13.5-ios-static.xcframework.zip"
+XCF_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.3/sherpa-onnx-v1.13.3-ios.tar.bz2"
 if [[ ! -d "$IOS_PKG_DIR/sherpa-onnx.xcframework" ]]; then
-  msg "📥 Downloading Sherpa-ONNX v1.13.5 static XCFramework …"
-  curl -fL --retry 3 "$XCF_URL" -o "$TMP_DIR/xcf.zip"
-  unzip -q "$TMP_DIR/xcf.zip" -d "$TMP_DIR/xcf"
-  FOUND_SHERPA="$(find "$TMP_DIR/xcf" -type d -name 'sherpa-onnx.xcframework' | head -1)"
-  if [[ -z "$FOUND_SHERPA" ]]; then
-    err "❌ sherpa-onnx.xcframework not found after extraction"
-    exit 1
-  fi
-  mv "$FOUND_SHERPA" "$IOS_PKG_DIR/"
-  ok "✅ Sherpa-ONNX v1.13.5 XCFramework ready at $IOS_PKG_DIR/sherpa-onnx.xcframework"
+  msg "📥 Downloading Sherpa-ONNX XCFramework …"
+  curl -L "$XCF_URL" -o "$TMP_DIR/xcf.tar.bz2"
+  tar -xjf "$TMP_DIR/xcf.tar.bz2" -C "$TMP_DIR"
+  mv "$TMP_DIR/build-ios/sherpa-onnx.xcframework" "$IOS_PKG_DIR/"
+  ok "✅ XCFramework ready at $IOS_PKG_DIR/sherpa-onnx.xcframework"
 else
   ok "✅ XCFramework already present"
 fi
 
-# Newer Sherpa iOS XCFrameworks place the public C header inside the binary
-# framework slice instead of the legacy ios-arm64/Headers tree. Our Objective-C++
-# bridge includes <sherpa-onnx/c-api/c-api.h>, so create one stable compatibility
-# include root regardless of the upstream archive layout.
-COMPAT_HEADERS="$IOS_PKG_DIR/CompatHeaders"
-rm -rf "$COMPAT_HEADERS"
-mkdir -p "$COMPAT_HEADERS/sherpa-onnx/c-api"
-CAPI_HEADER="$(find "$IOS_PKG_DIR/sherpa-onnx.xcframework" -type f -name 'c-api.h' | head -1)"
-if [[ -z "$CAPI_HEADER" ]]; then
-  err "❌ sherpa-onnx c-api.h not found inside XCFramework"
-  find "$IOS_PKG_DIR/sherpa-onnx.xcframework" -maxdepth 7 -type f | sort | head -250
-  exit 1
-fi
-cp "$CAPI_HEADER" "$COMPAT_HEADERS/sherpa-onnx/c-api/c-api.h"
-ok "✅ Sherpa C API compatibility include prepared from: $CAPI_HEADER"
-
-########################################
-# 2. Download matching ONNX Runtime    #
-########################################
-# Sherpa-ONNX v1.13.5 Swift static XCFramework is paired with ORT 1.28.2.
-# runtime next to Sherpa so there is one ABI-compatible ORT implementation.
-if [[ ! -d "$ORT_XCF_DIR" ]]; then
-  msg "📥 Downloading ONNX Runtime $ORT_VERSION XCFramework …"
-  ORT_URL="https://github.com/csukuangfj/onnxruntime-libs/releases/download/v$ORT_VERSION/onnxruntime-ios-static-xcframework-$ORT_VERSION.xcframework.zip"
-  curl -fL --retry 3 "$ORT_URL" -o "$TMP_DIR/ort.zip"
-  unzip -q "$TMP_DIR/ort.zip" -d "$TMP_DIR/ort"
-  FOUND_ORT="$(find "$TMP_DIR/ort" -type d -name 'onnxruntime.xcframework' | head -1)"
-  if [[ -z "$FOUND_ORT" ]]; then
-    err "❌ ONNX Runtime XCFramework not found after extraction"
-    exit 1
-  fi
-  mv "$FOUND_ORT" "$ORT_XCF_DIR"
-  ok "✅ ONNX Runtime $ORT_VERSION ready at $ORT_XCF_DIR"
-else
-  ok "✅ Matching ONNX Runtime already present"
-fi
-
 ################
-# 3. Cleanup   #
+# 4. Cleanup   #
 ################
 rm -rf "$TMP_DIR"
 ok "🎉 Sherpa-ONNX setup complete for iOS & Android"
