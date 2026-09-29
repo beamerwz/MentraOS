@@ -25,6 +25,11 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Setup Sherpa and ABI-matched ONNX Runtime
+        run: |
+          set -euo pipefail
+          bash mobile/scripts/setup-sherpa-onnx-optional.sh
+
       - name: Generate standalone Xcode project
         working-directory: g2-native
         run: xcodegen generate
