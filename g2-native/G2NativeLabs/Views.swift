@@ -162,6 +162,9 @@ struct ModelsView: View {
             List {
                 Section {
                     Button {
+                        // Keep the native G2 runtime warm before handing UI control
+                        // to the system Files picker.
+                        g2.ensureRuntimeAlive(reason: "opening model picker")
                         importing = true
                     } label: {
                         Label("Import folder or .tar.bz2", systemImage: "square.and.arrow.down")
@@ -245,7 +248,11 @@ struct ModelsView: View {
             }
             .navigationTitle("Models")
         }
-        .sheet(isPresented: $importing) {
+        .sheet(isPresented: $importing, onDismiss: {
+            // Returning from Files can leave the EvenHub audio edge stale even
+            // while CoreBluetooth still reports both lenses connected.
+            g2.ensureRuntimeAlive(reason: "model picker dismissed")
+        }) {
             NativeModelDocumentPicker { result in
                 importing = false
                 switch result {
@@ -258,7 +265,9 @@ struct ModelsView: View {
             .ignoresSafeArea()
         }
         .onAppear {
-            // Do not touch the BLE/audio session merely because the user opened Models.
+            // Models never tears down BLE. A lightweight heartbeat/recovery check
+            // keeps the existing native EvenHub page + microphone session alive.
+            g2.ensureRuntimeAlive(reason: "models tab opened")
         }
     }
 }
