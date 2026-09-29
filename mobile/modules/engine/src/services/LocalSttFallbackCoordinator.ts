@@ -41,6 +41,11 @@ class LocalSttFallbackCoordinator {
     // previous session would cause native to feed Sherpa before any miniapp
     // registered a subscription.
     useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
+    // Keep the native DeviceStore mirror in sync. DeviceManager.handlePcm()
+    // gates PCM -> Sherpa on this native flag, not on the JS store.
+    void BluetoothSdk.updateBluetoothSettings({local_stt_fallback_active: false}).catch((err) => {
+      this.log(`failed to clear native local STT flag on boot: ${err}`)
+    })
   }
 
   /**
@@ -124,14 +129,26 @@ class LocalSttFallbackCoordinator {
       this.log("local stt activation skipped: routing changed during transcriber restart")
       return
     }
+    try {
+      // Critical: DeviceManager.handlePcm() reads the native DeviceStore copy.
+      // Without this mirror, the mic can be running while Sherpa receives zero PCM.
+      await BluetoothSdk.updateBluetoothSettings({local_stt_fallback_active: true})
+    } catch (err) {
+      this.log(`failed to enable native local STT PCM feed: ${err}`)
+      return
+    }
     useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, true)
     this.localActive = true
+    this.log("local stt active: native PCM -> Sherpa feed enabled")
   }
 
   private stopLocalStt(reason: string): void {
     this.log(`stopping local stt: ${reason}`)
     useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
     this.localActive = false
+    void BluetoothSdk.updateBluetoothSettings({local_stt_fallback_active: false}).catch((err) => {
+      this.log(`failed to disable native local STT PCM feed: ${err}`)
+    })
   }
 
   private shouldUseLocalStt(): boolean {
