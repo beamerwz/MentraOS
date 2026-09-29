@@ -74,6 +74,80 @@ enum G2NativeProtocol {
         return root.data
     }
 
+    static func createCaptionPage(text: String, magic: Int32) -> Data {
+        var event = PBWriter()
+        event.int32(1, 0)
+        event.int32(2, 0)
+        event.int32(3, 1)
+        event.int32(4, 1)
+        event.int32(5, 0)
+        event.int32(6, 0)
+        event.int32(7, 0)
+        event.int32(8, 0)
+        event.int32(9, 0)
+        event.string(10, "evt-0")
+        event.int32(11, 1)
+        event.string(12, "")
+
+        var caption = PBWriter()
+        caption.int32(1, 0)
+        caption.int32(2, 0)
+        caption.int32(3, 576)
+        caption.int32(4, 288)
+        caption.int32(5, 0)
+        caption.int32(6, 0)
+        caption.int32(7, 0)
+        caption.int32(8, 4)
+        caption.int32(9, 1)
+        caption.string(10, "caption-1")
+        caption.int32(11, 0)
+        caption.string(12, text.isEmpty ? " " : text)
+
+        var page = PBWriter()
+        page.int32(1, 2)
+        page.message(3, event.data)
+        page.message(3, caption.data)
+
+        var root = PBWriter()
+        root.int32(1, 0)
+        root.int32(2, magic)
+        root.message(3, page.data)
+        return root.data
+    }
+
+    static func updateCaption(text: String, magic: Int32) -> Data {
+        let value = text.isEmpty ? " " : text
+        var update = PBWriter()
+        update.int32(1, 1)
+        update.int32(3, 0)
+        update.int32(4, Int32(value.utf8.count))
+        update.string(5, value)
+
+        var root = PBWriter()
+        root.int32(1, 5)
+        root.int32(2, magic)
+        root.message(9, update.data)
+        return root.data
+    }
+
+    static func baseHeartbeat(magic: Int32) -> Data {
+        var root = PBWriter()
+        root.int32(1, 14)
+        root.int32(2, magic)
+        var empty = PBWriter()
+        root.message(13, empty.data)
+        return root.data
+    }
+
+    static func evenHubHeartbeat(magic: Int32) -> Data {
+        var heartbeat = PBWriter()
+        var root = PBWriter()
+        root.int32(1, 12)
+        root.int32(2, magic)
+        root.message(13, heartbeat.data)
+        return root.data
+    }
+
     static func parseAuthResponse(_ payload: Data) -> Bool? {
         var reader = PBReader(payload)
         let fields = reader.fields()
@@ -105,6 +179,13 @@ struct PBWriter {
     }
 
     mutating func bool(_ field: Int, _ value: Bool) { int32(field, value ? 1 : 0) }
+
+    mutating func string(_ field: Int, _ value: String) {
+        let bytes = Data(value.utf8)
+        varint(UInt64(field << 3) | 2)
+        varint(UInt64(bytes.count))
+        data.append(bytes)
+    }
 
     mutating func message(_ field: Int, _ value: Data) {
         varint(UInt64(field << 3) | 2)
