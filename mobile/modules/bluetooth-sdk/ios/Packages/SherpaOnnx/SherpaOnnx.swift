@@ -331,6 +331,62 @@ public class SherpaOnnxRecognizer {
   public func isEndpoint() -> Bool {
     return SherpaOnnxOnlineStreamIsEndpoint(recognizer, stream) != 0
   }
+
+  /// Set a per-stream option used by multilingual online models such as
+  /// Nemotron. Kept on the recognizer wrapper because Mentra's STT layer owns
+  /// one live stream at a time.
+  public func setOption(key: String, value: String) throws {
+    key.withCString { keyPtr in
+      value.withCString { valuePtr in
+        SherpaOnnxOnlineStreamSetOption(stream, keyPtr, valuePtr)
+      }
+    }
+  }
+
+  /// Replace the decoding stream without reloading the recognizer/model.
+  public func recreateStream() throws {
+    guard let replacement = SherpaOnnxCreateOnlineStream(recognizer) else {
+      throw NSError(
+        domain: "SherpaOnnxRecognizer",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "CreateOnlineStream returned nil"]
+      )
+    }
+
+    lock.lock()
+    let old = stream
+    stream = replacement
+    lock.unlock()
+
+    SherpaOnnxDestroyOnlineStream(old)
+  }
+
+  /// Execute a small staged decode so incompatible online-model contracts are
+  /// detected during initialization rather than on the first live utterance.
+  public func smokeTest(sampleRate: Int = 16_000) throws {
+    let chunkSamples = max(1, sampleRate / 5) // 200 ms
+    let silence = [Float](repeating: 0, count: chunkSamples)
+    var decodeCount = 0
+
+    for _ in 0..<20 { // up to 4 s
+      acceptWaveform(samples: silence, sampleRate: sampleRate)
+      while isReady() {
+        decode()
+        decodeCount += 1
+      }
+      if decodeCount > 0 { break }
+    }
+
+    guard decodeCount > 0 else {
+      throw NSError(
+        domain: "SherpaOnnxRecognizer",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "Smoke test did not reach the encoder after 4.0 s"]
+      )
+    }
+
+    reset()
+  }
 }
 
 // For offline APIs
