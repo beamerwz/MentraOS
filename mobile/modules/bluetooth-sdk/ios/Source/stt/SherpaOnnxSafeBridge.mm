@@ -1,4 +1,5 @@
 #include "SherpaOnnxSafeBridge.h"
+#include "sherpa-onnx/c-api/c-api.h"
 
 #include <exception>
 #include <string>
