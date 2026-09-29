@@ -25,10 +25,9 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore' if include_expo_adapter
   s.dependency 'SWCompression', '~> 4.8.0'
   s.dependency 'SwiftProtobuf', '~> 1.0'
-  # Do NOT link a second ONNX Runtime into the app. The vendored Sherpa iOS
-  # archive already carries the ORT implementation it was built against.
-  # Mixing CocoaPods onnxruntime-objc 1.18.0 with Sherpa's bundled ORT leaves
-  # Ort::detail::Global::Api pointing at the wrong ABI and crashes at
+  # Sherpa-ONNX v1.13.3's iOS build is compiled against ONNX Runtime 1.26.0.
+  # Vendor that exact static ORT XCFramework once. Do not add onnxruntime-objc:
+  # an older CocoaPods ORT caused the Global::Api ABI collision at
   # SessionOptions::SetIntraOpNumThreads (EXC_BAD_ACCESS 0xC0).
   s.dependency 'UltraliteSDK'
 
@@ -50,7 +49,10 @@ Pod::Spec.new do |s|
   s.library = 'bz2'
 
   # Vendored frameworks
-  s.vendored_frameworks = 'Packages/SherpaOnnx/sherpa-onnx.xcframework'
+  s.vendored_frameworks = [
+    'Packages/SherpaOnnx/sherpa-onnx.xcframework',
+    'Packages/SherpaOnnx/onnxruntime.xcframework'
+  ]
 
   s.resource_bundles = {
     'BluetoothSDKPrivacy' => ['Source/PrivacyInfo.xcprivacy']
