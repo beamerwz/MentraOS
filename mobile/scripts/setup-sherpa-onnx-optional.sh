@@ -70,7 +70,7 @@ fi
 # runtime next to Sherpa so there is one ABI-compatible ORT implementation.
 if [[ ! -d "$ORT_XCF_DIR" ]]; then
   msg "📥 Downloading ONNX Runtime $ORT_VERSION XCFramework …"
-  ORT_URL="https://github.com/csukuangfj/onnxruntime-libs/releases/download/v$ORT_VERSION/onnxruntime-ios-static-xcframework-$ORT_VERSION.zip"
+  ORT_URL="https://github.com/csukuangfj/onnxruntime-libs/releases/download/v$ORT_VERSION/onnxruntime-ios-static-xcframework-$ORT_VERSION.xcframework.zip"
   curl -fL --retry 3 "$ORT_URL" -o "$TMP_DIR/ort.zip"
   unzip -q "$TMP_DIR/ort.zip" -d "$TMP_DIR/ort"
   FOUND_ORT="$(find "$TMP_DIR/ort" -type d -name 'onnxruntime.xcframework' | head -1)"
