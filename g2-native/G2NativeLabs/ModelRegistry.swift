@@ -129,7 +129,7 @@ final class ModelRegistry: ObservableObject {
         persist()
     }
 
-    static func detect(files: [String], sourceName: String = "") -> ASRFamily {
+    nonisolated static func detect(files: [String], sourceName: String = "") -> ASRFamily {
         let joined = ([sourceName] + files).joined(separator: " ")
         if joined.contains("nemotron") || joined.contains("nemo") { return .nemotron }
         if joined.contains("whisper") { return .whisper }
@@ -162,7 +162,7 @@ final class ModelRegistry: ObservableObject {
         }
     }
 
-    private static func modelRoot() throws -> URL {
+    nonisolated private static func modelRoot() throws -> URL {
         let base = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -174,7 +174,7 @@ final class ModelRegistry: ObservableObject {
         return root
     }
 
-    private static func cleanDisplayName(_ file: String) -> String {
+    nonisolated private static func cleanDisplayName(_ file: String) -> String {
         let lower = file.lowercased()
         if lower.hasSuffix(".tar.bz2") { return String(file.dropLast(8)) }
         if lower.hasSuffix(".tbz2") { return String(file.dropLast(5)) }
