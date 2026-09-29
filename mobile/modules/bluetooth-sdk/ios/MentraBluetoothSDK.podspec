@@ -25,7 +25,7 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore' if include_expo_adapter
   s.dependency 'SWCompression', '~> 4.8.0'
   s.dependency 'SwiftProtobuf', '~> 1.0'
-  # Sherpa-ONNX v1.13.8's iOS build is compiled against ONNX Runtime 1.27.1.
+  # Sherpa-ONNX v1.13.8's iOS build is compiled against ONNX Runtime 1.28.2.
   # Vendor that exact static ORT XCFramework once. Do not add onnxruntime-objc:
   # an older CocoaPods ORT caused the Global::Api ABI collision at
   # SessionOptions::SetIntraOpNumThreads (EXC_BAD_ACCESS 0xC0).
