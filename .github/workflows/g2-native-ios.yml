@@ -25,11 +25,23 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Setup Sherpa and ABI-matched ONNX Runtime
-        working-directory: mobile
+      - name: Setup ABI-matched ONNX Runtime
         run: |
           set -euo pipefail
-          bash scripts/setup-sherpa-onnx-optional.sh
+          ORT_VERSION="1.26.0"
+          PKG="mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx"
+          DEST="$PKG/onnxruntime.xcframework"
+          if [ ! -d "$DEST" ]; then
+            mkdir -p /tmp/g2-ort
+            curl -fL --retry 3 \
+              "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v$ORT_VERSION/onnxruntime-ios-static-xcframework-$ORT_VERSION.zip" \
+              -o /tmp/g2-ort/ort.zip
+            unzip -q /tmp/g2-ort/ort.zip -d /tmp/g2-ort/unpacked
+            FOUND="$(find /tmp/g2-ort/unpacked -type d -name onnxruntime.xcframework | head -1)"
+            test -n "$FOUND"
+            mv "$FOUND" "$DEST"
+          fi
+          test -f "$DEST/ios-arm64/onnxruntime.framework/onnxruntime"
 
       - name: Generate standalone Xcode project
         working-directory: g2-native
