@@ -98,7 +98,7 @@ private struct LiveView: View {
 
             Text(app.status)
                 .font(.footnote)
-                .foregroundStyle(app.diagnostics.lastError.isEmpty ? .secondary : .orange)
+                .foregroundStyle(app.diagnostics.lastError.isEmpty ? Color.secondary : Color.orange)
 
             Button(app.isRunning ? "Stop captions" : "Start captions") {
                 app.isRunning ? app.stop() : app.start()
