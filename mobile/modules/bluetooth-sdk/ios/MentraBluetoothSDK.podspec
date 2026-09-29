@@ -41,6 +41,13 @@ Pod::Spec.new do |s|
     'HEADER_SEARCH_PATHS' => '$(inherited) "$(PODS_TARGET_SRCROOT)/Packages/SherpaOnnx/CompatHeaders"'
   }
 
+  # SherpaOnnxSafeBridge.h is part of this pod's public Clang module. When the
+  # application imports MentraBluetoothSDK, Clang reparses that public header
+  # in the user target, so the compatibility C header must also be visible there.
+  s.user_target_xcconfig = {
+    'HEADER_SEARCH_PATHS' => '$(inherited) "$(PROJECT_DIR)/../modules/bluetooth-sdk/ios/Packages/SherpaOnnx/CompatHeaders"'
+  }
+
   # iOS frameworks required by Bluetooth SDK
   ios_frameworks = ['AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics']
   ios_frameworks << 'Network' if include_expo_adapter
