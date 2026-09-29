@@ -63,6 +63,22 @@ else
   ok "✅ XCFramework already present"
 fi
 
+# Newer Sherpa iOS XCFrameworks place the public C header inside the binary
+# framework slice instead of the legacy ios-arm64/Headers tree. Our Objective-C++
+# bridge includes <sherpa-onnx/c-api/c-api.h>, so create one stable compatibility
+# include root regardless of the upstream archive layout.
+COMPAT_HEADERS="$IOS_PKG_DIR/CompatHeaders"
+rm -rf "$COMPAT_HEADERS"
+mkdir -p "$COMPAT_HEADERS/sherpa-onnx/c-api"
+CAPI_HEADER="$(find "$IOS_PKG_DIR/sherpa-onnx.xcframework" -type f -name 'c-api.h' | head -1)"
+if [[ -z "$CAPI_HEADER" ]]; then
+  err "❌ sherpa-onnx c-api.h not found inside XCFramework"
+  find "$IOS_PKG_DIR/sherpa-onnx.xcframework" -maxdepth 7 -type f | sort | head -250
+  exit 1
+fi
+cp "$CAPI_HEADER" "$COMPAT_HEADERS/sherpa-onnx/c-api/c-api.h"
+ok "✅ Sherpa C API compatibility include prepared from: $CAPI_HEADER"
+
 ########################################
 # 2. Download matching ONNX Runtime    #
 ########################################
