@@ -84,11 +84,9 @@ private final class SafeSherpaOnlineRecognizer {
         }
     }
 
-    func getResult() -> SherpaOnnxOnlineRecognitionResult {
+    func getResult() throws -> SherpaOnnxOnlineRecognitionResult {
         guard let result = SherpaOnnxGetOnlineStreamResult(recognizer, stream) else {
-            return SherpaOnnxOnlineRecognitionResult(
-                result: SherpaOnnxGetOnlineStreamResult(recognizer, stream)!
-            )
+            throw SafeSherpaRecognizerError.native("GetOnlineStreamResult returned nil")
         }
         return SherpaOnnxOnlineRecognitionResult(result: result)
     }
@@ -322,7 +320,7 @@ final class NativeASRManager: ObservableObject {
                     passes += 1
                 }
 
-                let result = recognizer.getResult().text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let result = try recognizer.getResult().text.trimmingCharacters(in: .whitespacesAndNewlines)
                 let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
 
                 if recognizer.isEndpoint() {
