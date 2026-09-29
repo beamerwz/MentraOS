@@ -1,5 +1,145 @@
 import Foundation
 
+private enum SafeSherpaRecognizerError: LocalizedError {
+    case native(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .native(let message): return message
+        }
+    }
+}
+
+private func safeSherpaError(_ operation: String) -> SafeSherpaRecognizerError {
+    if let ptr = MentraSherpaLastError() {
+        let detail = String(cString: ptr)
+        if !detail.isEmpty {
+            return .native("\(operation): \(detail)")
+        }
+    }
+    return .native("\(operation) failed")
+}
+
+/// Small exception-safe wrapper around sherpa-onnx's C API.
+///
+/// We intentionally keep this separate from the upstream Swift convenience
+/// wrapper. The C++ recognizer can throw through ONNX Runtime on malformed or
+/// incompatible model execution; SherpaOnnxSafeBridge catches those exceptions
+/// so G2 LABS can show an error instead of terminating the app.
+private final class SafeSherpaOnlineRecognizer {
+    private let recognizer: OpaquePointer
+    private var stream: OpaquePointer
+    private let lock = NSLock()
+
+    init(config: UnsafePointer<SherpaOnnxOnlineRecognizerConfig>) throws {
+        guard let recognizer = MentraSherpaCreateOnlineRecognizer(config) else {
+            throw safeSherpaError("CreateOnlineRecognizer")
+        }
+        self.recognizer = recognizer
+
+        guard let stream = MentraSherpaCreateOnlineStream(recognizer) else {
+            SherpaOnnxDestroyOnlineRecognizer(recognizer)
+            throw safeSherpaError("CreateOnlineStream")
+        }
+        self.stream = stream
+    }
+
+    deinit {
+        SherpaOnnxDestroyOnlineStream(stream)
+        SherpaOnnxDestroyOnlineRecognizer(recognizer)
+    }
+
+    func setOption(key: String, value: String) throws {
+        let ok = key.withCString { keyPtr in
+            value.withCString { valuePtr in
+                MentraSherpaOnlineStreamSetOption(stream, keyPtr, valuePtr)
+            }
+        }
+        if ok == 0 { throw safeSherpaError("OnlineStreamSetOption") }
+    }
+
+    func acceptWaveform(samples: [Float], sampleRate: Int) throws {
+        let ok = samples.withUnsafeBufferPointer { buffer in
+            MentraSherpaOnlineStreamAcceptWaveform(
+                stream,
+                Int32(sampleRate),
+                buffer.baseAddress,
+                Int32(buffer.count)
+            )
+        }
+        if ok == 0 { throw safeSherpaError("OnlineStreamAcceptWaveform") }
+    }
+
+    func isReady() throws -> Bool {
+        var ready: Int32 = 0
+        if MentraSherpaIsOnlineStreamReady(recognizer, stream, &ready) == 0 {
+            throw safeSherpaError("IsOnlineStreamReady")
+        }
+        return ready != 0
+    }
+
+    func decode() throws {
+        if MentraSherpaDecodeOnlineStream(recognizer, stream) == 0 {
+            throw safeSherpaError("DecodeOnlineStream")
+        }
+    }
+
+    func getResult() -> SherpaOnnxOnlineRecognitionResult {
+        guard let result = SherpaOnnxGetOnlineStreamResult(recognizer, stream) else {
+            return SherpaOnnxOnlineRecognitionResult(
+                result: SherpaOnnxGetOnlineStreamResult(recognizer, stream)!
+            )
+        }
+        return SherpaOnnxOnlineRecognitionResult(result: result)
+    }
+
+    func reset() throws {
+        if MentraSherpaOnlineStreamReset(recognizer, stream) == 0 {
+            throw safeSherpaError("OnlineStreamReset")
+        }
+    }
+
+    func recreateStream() throws {
+        guard let replacement = MentraSherpaCreateOnlineStream(recognizer) else {
+            throw safeSherpaError("CreateOnlineStream")
+        }
+        lock.lock()
+        let old = stream
+        stream = replacement
+        lock.unlock()
+        SherpaOnnxDestroyOnlineStream(old)
+    }
+
+    func isEndpoint() -> Bool {
+        SherpaOnnxOnlineStreamIsEndpoint(recognizer, stream) != 0
+    }
+
+    /// Feed staged silence until the streaming encoder is genuinely ready.
+    /// Nemotron exports can use 80/160/560/1120 ms chunks, so a fixed 500 ms
+    /// smoke waveform is not a valid readiness test.
+    func smokeTest(sampleRate: Int = 16_000) throws {
+        let chunkSamples = max(1, sampleRate / 5) // 200 ms
+        let silence = [Float](repeating: 0, count: chunkSamples)
+        var decodeCount = 0
+
+        for _ in 0..<20 { // up to 4 seconds
+            try acceptWaveform(samples: silence, sampleRate: sampleRate)
+            while try isReady() {
+                try decode()
+                decodeCount += 1
+            }
+            if decodeCount > 0 { break }
+        }
+
+        guard decodeCount > 0 else {
+            throw SafeSherpaRecognizerError.native(
+                "Smoke test did not reach the encoder after 4.0 s of staged audio"
+            )
+        }
+        try reset()
+    }
+}
+
 enum NativeASRState: Equatable {
     case idle
     case loading(String)
@@ -33,7 +173,7 @@ final class NativeASRManager: ObservableObject {
     var onTranscript: ((String, Bool) -> Void)?
 
     private let work = DispatchQueue(label: "com.g2labs.native.asr", qos: .userInitiated)
-    private var recognizer: SherpaOnnxRecognizer?
+    private var recognizer: SafeSherpaOnlineRecognizer?
     private var generation = 0
     private var lastPartial = ""
 
@@ -67,7 +207,7 @@ final class NativeASRManager: ObservableObject {
                                   userInfo: [NSLocalizedDescriptionKey: "tokens.txt is missing"])
                 }
 
-                let nextRecognizer: SherpaOnnxRecognizer
+                let nextRecognizer: SafeSherpaOnlineRecognizer
                 switch family {
                 case .nemotron, .streamingTransducer:
                     guard let encoder = Self.pick(files, contains: "encoder", suffix: ".onnx"),
@@ -98,7 +238,7 @@ final class NativeASRManager: ObservableObject {
                         rule2MinTrailingSilence: 0.6,
                         rule3MinUtteranceLength: 12.0
                     )
-                    nextRecognizer = try SherpaOnnxRecognizer(config: &config)
+                    nextRecognizer = try SafeSherpaOnlineRecognizer(config: &config)
 
                 case .ctc:
                     guard let model = files.first(where: {
@@ -125,7 +265,7 @@ final class NativeASRManager: ObservableObject {
                         rule2MinTrailingSilence: 0.6,
                         rule3MinUtteranceLength: 12.0
                     )
-                    nextRecognizer = try SherpaOnnxRecognizer(config: &config)
+                    nextRecognizer = try SafeSherpaOnlineRecognizer(config: &config)
 
                 default:
                     throw NSError(domain: "G2NativeASR", code: 4,
