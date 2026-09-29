@@ -59,8 +59,15 @@ final class G2Transport: NSObject, ObservableObject {
     @Published var audioPackets = 0
     @Published var audioBytes = 0
     @Published var lastAudioAt: Date?
+    @Published var pcmChunks = 0
+    @Published var pcmBytes: Int64 = 0
+    @Published var pcmRMS: Double = 0
+    @Published var micArmed = false
+    @Published var captionUpdates = 0
     @Published var lastError: String?
     @Published var events: [String] = []
+
+    let asr = NativeASRManager()
 
     var isReady: Bool {
         if case .ready = pairingStage { return true }
@@ -83,7 +90,11 @@ final class G2Transport: NSObject, ObservableObject {
     private var authStarted = false
     private var leftAuthenticated = false
     private var rightAuthenticated = false
+    private var runtimeStarted = false
+    private var heartbeatTask: Task<Void, Never>?
+    private var lastAudioFrame: Data?
     private let codec = G2PacketCodec()
+    private let pcmConverter = PcmConverter()
 
     private let rememberedSerialKey = "G2NativeLabs.rememberedSerial"
     private let leftUUIDKey = "G2NativeLabs.leftUUID"
@@ -91,8 +102,16 @@ final class G2Transport: NSObject, ObservableObject {
 
     override init() {
         super.init()
+        asr.onTranscript = { [weak self] text, final in
+            guard let self else { return }
+            self.displayCaption(text, isFinal: final)
+        }
         central = CBCentralManager(delegate: self, queue: nil,
                                    options: [CBCentralManagerOptionShowPowerAlertKey: true])
+    }
+
+    deinit {
+        heartbeatTask?.cancel()
     }
 
     func scan() {
@@ -165,6 +184,12 @@ final class G2Transport: NSObject, ObservableObject {
         authStarted = false
         leftAuthenticated = false
         rightAuthenticated = false
+        runtimeStarted = false
+        micArmed = false
+        lastAudioFrame = nil
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
+        pcmConverter.resetDecoder()
     }
 
     private func tryReconnectKnownUUIDs() {
@@ -263,7 +288,7 @@ final class G2Transport: NSObject, ObservableObject {
             if side == "L" { leftAuthenticated = true } else { rightAuthenticated = true }
         }
 
-        if leftAuthenticated && rightAuthenticated, let serial = selectedSerial {
+        if leftAuthenticated && rightAuthenticated, let serial = selectedSerial, !isReady {
             connectedSerial = serial
             connectedName = rightPeripheral?.name ?? leftPeripheral?.name ?? "Even G2"
             pairingStage = .ready(serial)
@@ -275,7 +300,140 @@ final class G2Transport: NSObject, ObservableObject {
                 UserDefaults.standard.set(id, forKey: rightUUIDKey)
             }
             log("PAIRING PASS: both lenses authenticated")
+            startRuntimeSession()
         }
+    }
+
+    private func startRuntimeSession() {
+        guard !runtimeStarted else { return }
+        runtimeStarted = true
+        log("Creating native EvenHub caption page")
+
+        Task { @MainActor in
+            await send(
+                service: G2NativeProtocol.evenHubService,
+                payload: G2NativeProtocol.createCaptionPage(text: "G2 LABS\nPreparing microphone…", magic: codec.nextMagic()),
+                reserve: true,
+                toLeft: false,
+                toRight: true
+            )
+
+            try? await Task.sleep(nanoseconds: 350_000_000)
+
+            await send(
+                service: G2NativeProtocol.evenHubService,
+                payload: G2NativeProtocol.audioControl(enabled: false, magic: codec.nextMagic()),
+                reserve: true,
+                toLeft: false,
+                toRight: true
+            )
+
+            try? await Task.sleep(nanoseconds: 500_000_000)
+
+            await send(
+                service: G2NativeProtocol.evenHubService,
+                payload: G2NativeProtocol.audioControl(enabled: true, magic: codec.nextMagic()),
+                reserve: true,
+                toLeft: false,
+                toRight: true
+            )
+
+            micArmed = true
+            log("G2 MIC ARMED: live page + OFF→ON audio edge sent")
+            await updateCaptionOnGlasses(asr.state.isReady ? "Listening…" : "G2 LABS\nImport + activate a model")
+
+            heartbeatTask?.cancel()
+            heartbeatTask = Task { @MainActor [weak self] in
+                while let self, !Task.isCancelled, self.isReady {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    if Task.isCancelled { break }
+                    await self.send(
+                        service: G2NativeProtocol.deviceSettingsService,
+                        payload: G2NativeProtocol.baseHeartbeat(magic: self.codec.nextMagic()),
+                        toLeft: true,
+                        toRight: true
+                    )
+                    await self.send(
+                        service: G2NativeProtocol.evenHubService,
+                        payload: G2NativeProtocol.evenHubHeartbeat(magic: self.codec.nextMagic()),
+                        reserve: true,
+                        toLeft: false,
+                        toRight: true
+                    )
+                }
+            }
+        }
+    }
+
+    func activateModel(_ model: ASRModel, directory: URL) {
+        log("Loading ASR model: \(model.name) [\(model.family.rawValue)]")
+        asr.load(modelName: model.name, directory: directory, family: model.family, language: "it")
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            await updateCaptionOnGlasses("Loading \(model.name)…")
+        }
+    }
+
+    private func displayCaption(_ text: String, isFinal: Bool) {
+        guard !text.isEmpty, isReady else { return }
+        captionUpdates += 1
+        log("\(isFinal ? "FINAL" : "PARTIAL"): \(text.prefix(90))")
+        Task { @MainActor [weak self] in
+            await self?.updateCaptionOnGlasses(text)
+        }
+    }
+
+    private func updateCaptionOnGlasses(_ text: String) async {
+        await send(
+            service: G2NativeProtocol.evenHubService,
+            payload: G2NativeProtocol.updateCaption(text: text, magic: codec.nextMagic()),
+            reserve: true,
+            toLeft: false,
+            toRight: true
+        )
+    }
+
+    private func handleAudioPacket(_ data: Data) {
+        audioPackets += 1
+        audioBytes += data.count
+        lastAudioAt = Date()
+
+        let usableLength = min(data.count, 200)
+        guard usableLength >= 40 else {
+            log("AUDIO packet too short: \(data.count) bytes")
+            return
+        }
+
+        let audio = Data(data.prefix(usableLength))
+        if lastAudioFrame == audio { return }
+        lastAudioFrame = audio
+
+        let pcm = pcmConverter.decode(audio, frameSize: 40) as Data
+        guard !pcm.isEmpty else {
+            log("LC3 decode returned 0 PCM bytes")
+            return
+        }
+
+        pcmChunks += 1
+        pcmBytes += Int64(pcm.count)
+        pcmRMS = Self.rms(ofPCM16LE: pcm)
+        asr.acceptPCM(pcm)
+    }
+
+    private static func rms(ofPCM16LE data: Data) -> Double {
+        let count = data.count / 2
+        guard count > 0 else { return 0 }
+        let meanSquare: Double = data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return 0 }
+            let samples = base.bindMemory(to: Int16.self, capacity: count)
+            var sum = 0.0
+            for i in 0..<count {
+                let v = Double(Int16(littleEndian: samples[i])) / 32768.0
+                sum += v * v
+            }
+            return sum / Double(count)
+        }
+        return sqrt(meanSquare)
     }
 
     private func log(_ text: String) {
@@ -421,9 +579,7 @@ extension G2Transport: CBPeripheralDelegate {
         guard error == nil, let data = characteristic.value else { return }
         Task { @MainActor in
             if characteristic.uuid == Self.audioUUID {
-                audioPackets += 1
-                audioBytes += data.count
-                lastAudioAt = Date()
+                handleAudioPacket(data)
             } else if characteristic.uuid == Self.notifyUUID {
                 processControl(data, from: peripheral)
             }
