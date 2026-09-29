@@ -127,8 +127,12 @@ struct ConnectionView: View {
                 }
 
                 Section("RAW AUDIO PROOF") {
+                    LabeledContent("Mic armed", value: g2.micArmed ? "Yes" : "No")
                     LabeledContent("Audio packets", value: "\(g2.audioPackets)")
                     LabeledContent("Audio bytes", value: "\(g2.audioBytes)")
+                    LabeledContent("PCM chunks", value: "\(g2.pcmChunks)")
+                    LabeledContent("PCM bytes", value: "\(g2.pcmBytes)")
+                    LabeledContent("PCM RMS", value: String(format: "%.4f", g2.pcmRMS))
                     LabeledContent(
                         "Last audio",
                         value: g2.lastAudioAt?.formatted(date: .omitted, time: .standard) ?? "Never"
@@ -150,16 +154,33 @@ struct ConnectionView: View {
 
 struct ModelsView: View {
     @EnvironmentObject var registry: ModelRegistry
+    @EnvironmentObject var g2: G2Transport
     @State private var importing = false
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    Button("Import model folder") { importing = true }
-                    Text(registry.importMessage).font(.caption)
+                    Button {
+                        importing = true
+                    } label: {
+                        Label("Import folder or .tar.bz2", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(registry.isImporting)
+
+                    if registry.isImporting {
+                        ProgressView(value: registry.importProgress)
+                        Text("\(Int(registry.importProgress * 100))%")
+                            .font(.caption.monospacedDigit())
+                    }
+
+                    Text(registry.importMessage)
+                        .font(.caption)
+                        .foregroundStyle(registry.importMessage.contains("ERROR") ? .red : .secondary)
                 } header: {
                     Text("ONE MODEL REGISTRY")
+                } footer: {
+                    Text("Archives are extracted inside G2 LABS. You do not need to unpack .tar.bz2 in the Files app.")
                 }
 
                 Section("Installed") {
@@ -167,14 +188,58 @@ struct ModelsView: View {
                         Text("No models")
                             .foregroundStyle(.secondary)
                     }
+
                     ForEach(registry.models) { model in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(model.name).font(.headline)
-                            Text(model.family.rawValue)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(model.name).font(.headline)
+                                    Text(model.family.rawValue)
+                                        .font(.subheadline)
+                                }
+                                Spacer()
+                                if registry.activeID == model.id {
+                                    Label("ACTIVE", systemImage: "checkmark.circle.fill")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.green)
+                                }
+                            }
+
                             Text(model.validationMessage)
                                 .font(.caption)
                                 .foregroundStyle(model.validated ? .green : .orange)
+
+                            if model.validated {
+                                Button {
+                                    registry.markActive(model)
+                                    g2.activateModel(model, directory: model.location)
+                                } label: {
+                                    Label(
+                                        registry.activeID == model.id ? "Reload model" : "Activate model",
+                                        systemImage: "waveform.badge.mic"
+                                    )
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.purple)
+                            }
                         }
+                        .padding(.vertical, 5)
+                    }
+                    .onDelete { offsets in
+                        for index in offsets {
+                            registry.delete(registry.models[index])
+                        }
+                    }
+                }
+
+                Section("LIVE ASR") {
+                    LabeledContent("State", value: g2.asr.state.label)
+                    if !g2.asr.partialText.isEmpty {
+                        Text(g2.asr.partialText)
+                            .font(.title3)
+                    } else if !g2.asr.finalText.isEmpty {
+                        Text(g2.asr.finalText)
+                            .font(.title3)
                     }
                 }
             }
@@ -182,11 +247,13 @@ struct ModelsView: View {
         }
         .fileImporter(
             isPresented: $importing,
-            allowedContentTypes: [.folder],
+            allowedContentTypes: [.item],
             allowsMultipleSelection: false
         ) { result in
             if case .success(let urls) = result, let url = urls.first {
-                registry.importFolder(url)
+                registry.importModel(url)
+            } else if case .failure(let error) = result {
+                registry.importMessage = "IMPORT ERROR: \(error.localizedDescription)"
             }
         }
     }
@@ -209,9 +276,26 @@ struct DiagnosticsView: View {
                         ok: g2.audioPackets > 0,
                         detail: "\(g2.audioPackets) packets / \(g2.audioBytes) bytes"
                     )
-                    DiagnosticRow("PCM decode", ok: false, detail: "Next gate: LC3 decoder")
-                    DiagnosticRow("ASR recognizer", ok: false, detail: "Not started")
-                    DiagnosticRow("Caption display", ok: false, detail: "Not started")
+                    DiagnosticRow(
+                        "G2 mic session",
+                        ok: g2.micArmed,
+                        detail: g2.micArmed ? "EvenHub page live • audio OFF→ON sent" : "Waiting for page + mic arm"
+                    )
+                    DiagnosticRow(
+                        "PCM decode",
+                        ok: g2.pcmChunks > 0,
+                        detail: "\(g2.pcmChunks) chunks / \(g2.pcmBytes) bytes • RMS \(String(format: "%.4f", g2.pcmRMS))"
+                    )
+                    DiagnosticRow(
+                        "ASR recognizer",
+                        ok: g2.asr.state.isReady,
+                        detail: g2.asr.state.label + " • decode passes \(g2.asr.decodePasses)"
+                    )
+                    DiagnosticRow(
+                        "Caption display",
+                        ok: g2.captionUpdates > 0,
+                        detail: "\(g2.captionUpdates) text update(s) sent to G2"
+                    )
                 }
 
                 Section("EVENT LOG") {
