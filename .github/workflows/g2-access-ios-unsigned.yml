@@ -24,8 +24,8 @@ jobs:
     timeout-minutes: 90
     env:
       G2_ACCESS_BUILD: "1"
-      EXPO_PUBLIC_BUILD_ENV: "dev"
-      EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN: "g2-access-no-navigation"
+      EXPO_PUBLIC_BUILD_ENV: dev
+      EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN: g2-access-no-navigation
       SENTRY_DISABLE_AUTO_UPLOAD: "true"
       SENTRY_ALLOW_FAILURE: "true"
 
@@ -67,11 +67,9 @@ jobs:
         working-directory: mobile
         run: bun expo prebuild --platform ios
 
-      - name: Setup Sherpa ONNX
+      - name: Setup Sherpa and ABI-matched ONNX Runtime
         working-directory: mobile
         run: |
-          # Force a fresh Sherpa runtime. Nemotron 3.5 was re-exported after its
-          # initial multilingual support; use the current pinned iOS runtime.
           rm -rf modules/bluetooth-sdk/ios/Packages/SherpaOnnx/sherpa-onnx.xcframework
           rm -rf modules/bluetooth-sdk/ios/Packages/SherpaOnnx/onnxruntime.xcframework
           chmod +x scripts/setup-sherpa-onnx-optional.sh
@@ -92,8 +90,9 @@ jobs:
           ORT_BIN="../modules/bluetooth-sdk/ios/Packages/SherpaOnnx/onnxruntime.xcframework/ios-arm64/onnxruntime.framework/onnxruntime"
           test -f "$ORT_BIN" || { echo "::error::Matching ORT 1.26.0 binary missing"; exit 1; }
           nm -gU "$ORT_BIN" > /tmp/ort-symbols.txt
-          grep -q '_OrtGetApiBase
-          echo "OK: exactly one ABI-matched ONNX Runtime 1.26.0 is vendored for Sherpa v1.13.3"
+          grep -q '_OrtGetApiBase$' /tmp/ort-symbols.txt || { echo "::error::_OrtGetApiBase missing from ORT 1.26.0"; exit 1; }
+          grep -q '_OrtSessionOptionsAppendExecutionProvider_CoreML$' /tmp/ort-symbols.txt || { echo "::error::CoreML provider symbol missing from ORT 1.26.0"; exit 1; }
+          echo "OK: ABI-matched ONNX Runtime 1.26.0 symbols verified"
 
       - name: Build unsigned device app
         working-directory: mobile/ios
@@ -106,9 +105,6 @@ jobs:
             exit 1
           fi
           WORKSPACE_NAME="$(basename "$WORKSPACE")"
-          # Expo names the application scheme after the generated workspace.
-          # Do not select schemes[0]: CocoaPods schemes (for example BitByteData)
-          # can sort before the actual app and produce no .app.
           SCHEME="${WORKSPACE_NAME%.xcworkspace}"
           AVAILABLE_SCHEMES="$(xcodebuild -workspace "$WORKSPACE_NAME" -list -json)"
           echo "$AVAILABLE_SCHEMES"
@@ -140,154 +136,6 @@ jobs:
             echo "::error::No device .app found"
             exit 1
           fi
-          echo "Packaging $APP"
-          rm -rf Payload
-          mkdir Payload
-          cp -R "$APP" Payload/
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "Payload/$(basename "$APP")/Info.plist"
-          zip -qry G2_LABS_Phase1_unsigned.ipa Payload
-          rm -rf Payload
-          ls -lh G2_LABS_Phase1_unsigned.ipa
-
-      - name: Upload unsigned IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: G2_LABS_Phase1_unsigned_IPA
-          path: mobile/G2_LABS_Phase1_unsigned.ipa
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload Xcode log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: G2_ACCESS_xcodebuild_log
-          path: g2-access-xcodebuild.log
-          if-no-files-found: ignore
-          retention-days: 7
- /tmp/ort-symbols.txt || { echo "::error::_OrtGetApiBase missing from ORT 1.26.0"; exit 1; }
-          grep -q '_OrtSessionOptionsAppendExecutionProvider_CoreML
-          echo "OK: exactly one ABI-matched ONNX Runtime 1.26.0 is vendored for Sherpa v1.13.3"
-
-      - name: Build unsigned device app
-        working-directory: mobile/ios
-        run: |
-          set -euo pipefail
-          WORKSPACE="$(find . -maxdepth 1 -name '*.xcworkspace' -type d | head -1)"
-          if [ -z "$WORKSPACE" ]; then
-            echo "::error::No Xcode workspace generated"
-            ls -la
-            exit 1
-          fi
-          WORKSPACE_NAME="$(basename "$WORKSPACE")"
-          # Expo names the application scheme after the generated workspace.
-          # Do not select schemes[0]: CocoaPods schemes (for example BitByteData)
-          # can sort before the actual app and produce no .app.
-          SCHEME="${WORKSPACE_NAME%.xcworkspace}"
-          AVAILABLE_SCHEMES="$(xcodebuild -workspace "$WORKSPACE_NAME" -list -json)"
-          echo "$AVAILABLE_SCHEMES"
-          if ! echo "$AVAILABLE_SCHEMES" | python3 -c 'import json,sys; d=json.load(sys.stdin); target=sys.argv[1]; sys.exit(0 if target in d["workspace"]["schemes"] else 1)' "$SCHEME"; then
-            echo "::error::Expected app scheme $SCHEME was not generated"
-            exit 1
-          fi
-          echo "Building workspace=$WORKSPACE_NAME scheme=$SCHEME"
-          xcodebuild \
-            -workspace "$WORKSPACE_NAME" \
-            -scheme "$SCHEME" \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build-g2-access \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            PRODUCT_BUNDLE_IDENTIFIER="com.beamerwz.g2labs" \
-            INFOPLIST_KEY_CFBundleDisplayName="G2 LABS" \
-            build | tee ../../g2-access-xcodebuild.log
-
-      - name: Package unsigned IPA
-        working-directory: mobile
-        run: |
-          set -euo pipefail
-          APP="$(find ios/build-g2-access/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -1)"
-          if [ -z "$APP" ]; then
-            echo "::error::No device .app found"
-            exit 1
-          fi
-          echo "Packaging $APP"
-          rm -rf Payload
-          mkdir Payload
-          cp -R "$APP" Payload/
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "Payload/$(basename "$APP")/Info.plist"
-          zip -qry G2_LABS_Phase1_unsigned.ipa Payload
-          rm -rf Payload
-          ls -lh G2_LABS_Phase1_unsigned.ipa
-
-      - name: Upload unsigned IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: G2_LABS_Phase1_unsigned_IPA
-          path: mobile/G2_LABS_Phase1_unsigned.ipa
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload Xcode log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: G2_ACCESS_xcodebuild_log
-          path: g2-access-xcodebuild.log
-          if-no-files-found: ignore
-          retention-days: 7
- /tmp/ort-symbols.txt || { echo "::error::CoreML provider symbol missing from ORT 1.26.0"; exit 1; }
-          echo "OK: exactly one ABI-matched ONNX Runtime 1.26.0 is vendored for Sherpa v1.13.3"
-
-      - name: Build unsigned device app
-        working-directory: mobile/ios
-        run: |
-          set -euo pipefail
-          WORKSPACE="$(find . -maxdepth 1 -name '*.xcworkspace' -type d | head -1)"
-          if [ -z "$WORKSPACE" ]; then
-            echo "::error::No Xcode workspace generated"
-            ls -la
-            exit 1
-          fi
-          WORKSPACE_NAME="$(basename "$WORKSPACE")"
-          # Expo names the application scheme after the generated workspace.
-          # Do not select schemes[0]: CocoaPods schemes (for example BitByteData)
-          # can sort before the actual app and produce no .app.
-          SCHEME="${WORKSPACE_NAME%.xcworkspace}"
-          AVAILABLE_SCHEMES="$(xcodebuild -workspace "$WORKSPACE_NAME" -list -json)"
-          echo "$AVAILABLE_SCHEMES"
-          if ! echo "$AVAILABLE_SCHEMES" | python3 -c 'import json,sys; d=json.load(sys.stdin); target=sys.argv[1]; sys.exit(0 if target in d["workspace"]["schemes"] else 1)' "$SCHEME"; then
-            echo "::error::Expected app scheme $SCHEME was not generated"
-            exit 1
-          fi
-          echo "Building workspace=$WORKSPACE_NAME scheme=$SCHEME"
-          xcodebuild \
-            -workspace "$WORKSPACE_NAME" \
-            -scheme "$SCHEME" \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build-g2-access \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            PRODUCT_BUNDLE_IDENTIFIER="com.beamerwz.g2labs" \
-            INFOPLIST_KEY_CFBundleDisplayName="G2 LABS" \
-            build | tee ../../g2-access-xcodebuild.log
-
-      - name: Package unsigned IPA
-        working-directory: mobile
-        run: |
-          set -euo pipefail
-          APP="$(find ios/build-g2-access/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -1)"
-          if [ -z "$APP" ]; then
-            echo "::error::No device .app found"
-            exit 1
-          fi
-          echo "Packaging $APP"
           rm -rf Payload
           mkdir Payload
           cp -R "$APP" Payload/
