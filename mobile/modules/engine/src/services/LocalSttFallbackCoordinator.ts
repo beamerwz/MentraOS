@@ -152,7 +152,15 @@ class LocalSttFallbackCoordinator {
   }
 
   private shouldUseLocalStt(): boolean {
-    return this.hasTranscriptionSubscription && (this.hasForceLocalSubscription || !this.cloudConnected)
+    // G2 LABS is an account-free/offline-first build. A transcription
+    // subscription must always arm the native PCM -> Sherpa path; otherwise a
+    // nominal cloud-connected state leaves should_send_transcript=false AND
+    // local_stt_fallback_active=false, so every decoded glasses PCM frame is
+    // dropped before it reaches Sherpa.
+    //
+    // Cloud delivery can still exist independently, but local Captions must
+    // never depend on cloud auth/connectivity to hear the glasses microphone.
+    return this.hasTranscriptionSubscription
   }
 
   private log(msg: string): void {
