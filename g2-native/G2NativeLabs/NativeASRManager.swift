@@ -1,4 +1,5 @@
 import Foundation
+import MentraBluetoothSDK
 
 private enum SafeSherpaRecognizerError: LocalizedError {
     case native(String)
