@@ -27,7 +27,8 @@ targets:
     sources:
       - path: Sources
       - path: Vendor
-      - path: Resources
+      - path: Resources/BuiltinItalian
+        type: folder
         buildPhase: resources
     dependencies:
       - framework: Frameworks/sherpa-onnx.xcframework
