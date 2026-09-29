@@ -1,12 +1,11 @@
 import Foundation
-import CoreBluetooth
+import MentraBluetoothSDK
 
 struct G2PairCandidate: Identifiable, Equatable {
     let serial: String
-    let leftName: String?
-    let rightName: String?
+    let displayName: String
     var id: String { serial }
-    var complete: Bool { leftName != nil && rightName != nil }
+    var complete: Bool { true }
 }
 
 enum G2PairingStage: Equatable {
@@ -22,7 +21,7 @@ enum G2PairingStage: Equatable {
         switch self {
         case .bluetoothOff: return "Bluetooth unavailable"
         case .scanning: return "Looking for your G2"
-        case .waitingForBoth: return "Finding both lenses"
+        case .waitingForBoth: return "Preparing G2"
         case .connecting: return "Connecting"
         case .authenticating: return "Authenticating G2"
         case .ready: return "G2 ready"
@@ -32,25 +31,27 @@ enum G2PairingStage: Equatable {
 
     var detail: String {
         switch self {
-        case .bluetoothOff: return "Turn Bluetooth on to continue."
-        case .scanning: return "Mentra G2 transport is scanning for both lenses."
-        case .waitingForBoth(let sn): return "Found part of \(sn). Waiting for left + right."
-        case .connecting(let sn): return "Connecting both sides of \(sn)…"
-        case .authenticating(let sn): return "Running the G2 authentication/session sequence for \(sn)…"
-        case .ready(let sn): return "\(sn) is authenticated and the EvenHub runtime is managed."
-        case .failed(let message): return message
+        case .bluetoothOff:
+            return "Turn Bluetooth on to continue."
+        case .scanning:
+            return "Mentra Bluetooth is scanning for your Even G2."
+        case .waitingForBoth(let id):
+            return "Mentra found \(id) and is preparing the pair."
+        case .connecting(let id):
+            return "Mentra Bluetooth is connecting \(id)…"
+        case .authenticating(let id):
+            return "Mentra is authenticating both lenses and restoring the EvenHub session for \(id)…"
+        case .ready(let id):
+            return "\(id) is connected through Mentra Bluetooth."
+        case .failed(let message):
+            return message
         }
     }
 }
 
 @MainActor
 final class G2Transport: NSObject, ObservableObject {
-    static let service = CBUUID(string: G2NativeProtocol.serviceUUID)
-    static let writeUUID = CBUUID(string: G2NativeProtocol.writeUUID)
-    static let notifyUUID = CBUUID(string: G2NativeProtocol.notifyUUID)
-    static let audioUUID = CBUUID(string: G2NativeProtocol.audioUUID)
-
-    @Published var bluetoothState = "Starting"
+    @Published var bluetoothState = "Mentra SDK starting"
     @Published var candidates: [G2PairCandidate] = []
     @Published var pairingStage: G2PairingStage = .scanning
     @Published var connectedName: String?
@@ -74,614 +75,171 @@ final class G2Transport: NSObject, ObservableObject {
         return false
     }
 
-    private var central: CBCentralManager!
-    private var leftPeripheral: CBPeripheral?
-    private var rightPeripheral: CBPeripheral?
-    private var leftWrite: CBCharacteristic?
-    private var rightWrite: CBCharacteristic?
-    private var leftNotify: CBCharacteristic?
-    private var rightNotify: CBCharacteristic?
-    private var leftAudio: CBCharacteristic?
-    private var rightAudio: CBCharacteristic?
-
-    private var seen: [String: (left: CBPeripheral?, right: CBPeripheral?, leftName: String?, rightName: String?)] = [:]
-    private var selectedSerial: String?
-
-    private var authStarted = false
-    private var leftAuthenticated = false
-    private var rightAuthenticated = false
-
-    // Mentra G2 keeps the EvenHub page/mic lifecycle separate from BLE.
+    private let sdk: MentraBluetoothSDK
+    private var scanSession: ScanSession?
+    private var devicesByLabel: [String: Device] = [:]
+    private var selectedLabel: String?
     private var runtimeStarted = false
-    private var pageCreated = false
-    private var evenHubMicActive = false
-    private var micIntent = true
-    private var recoveryInFlight = false
-    private var lastRecoveryAt = Date.distantPast
-    private let recoveryDebounce: TimeInterval = 0.8
-    private var lastCaptionText = "G2 LABS"
-
-    // Mentra-style paced FIFO writes. This avoids burst-writing packets while
-    // model initialization or UI work is stressing the main run loop.
-    private var leftWriteQueue: [Data] = []
-    private var rightWriteQueue: [Data] = []
-    private var leftDraining = false
-    private var rightDraining = false
-    private let writePaceNanos: UInt64 = 6_000_000
-
-    private var heartbeatTask: Task<Void, Never>?
-    private var audioWatchdogTask: Task<Void, Never>?
-    private var reconnectTask: Task<Void, Never>?
-    private var intentionalDisconnect = false
-
-    private var lastAudioFrame: Data?
-    private let codec = G2PacketCodec()
-    private let pcmConverter = PcmConverter()
-
-    private let rememberedSerialKey = "G2NativeLabs.rememberedSerial"
-    private let leftUUIDKey = "G2NativeLabs.leftUUID"
-    private let rightUUIDKey = "G2NativeLabs.rightUUID"
+    private var modelWatchTask: Task<Void, Never>?
 
     override init() {
+        let client = MentraBluetoothSDK()
+        sdk = client
         super.init()
+
+        client.delegate = self
 
         asr.onTranscript = { [weak self] text, final in
             guard let self else { return }
-            self.displayCaption(text, isFinal: final)
+            Task { @MainActor in
+                self.displayCaption(text, isFinal: final)
+            }
         }
 
-        central = CBCentralManager(
-            delegate: self,
-            queue: nil,
-            options: [CBCentralManagerOptionShowPowerAlertKey: true]
-        )
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 650_000_000)
+            self?.restoreOrScan()
+        }
     }
 
     deinit {
-        heartbeatTask?.cancel()
-        audioWatchdogTask?.cancel()
-        reconnectTask?.cancel()
+        scanSession?.cancel()
+        modelWatchTask?.cancel()
     }
 
-    // MARK: - Mentra-derived pairing / reconnect
-
     func scan() {
-        guard central.state == .poweredOn else {
-            pairingStage = .bluetoothOff
-            return
-        }
-
-        intentionalDisconnect = false
-        central.stopScan()
-
-        if let remembered = UserDefaults.standard.string(forKey: rememberedSerialKey) {
-            selectedSerial = remembered
-            if connectKnownPair(serial: remembered) {
-                log("Mentra-style UUID reconnect target: \(remembered)")
-                return
-            }
-        }
-
+        scanSession?.cancel()
+        scanSession = nil
+        devicesByLabel.removeAll()
+        candidates.removeAll()
+        lastError = nil
+        bluetoothState = "Mentra SDK scanning"
         pairingStage = .scanning
-        log("Mentra G2 scan started")
-        central.scanForPeripherals(
-            withServices: nil,
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
-        )
+
+        do {
+            scanSession = try sdk.scan(
+                model: .g2,
+                timeout: 15,
+                onResults: { [weak self] devices in
+                    guard let self else { return }
+                    self.consumeScanResults(devices)
+                },
+                onComplete: { [weak self] devices in
+                    guard let self else { return }
+                    self.consumeScanResults(devices)
+                    if devices.isEmpty, !self.isReady {
+                        self.log("Mentra scan completed with no G2 result")
+                    }
+                }
+            )
+            log("Mentra G2 scan started")
+        } catch {
+            let message = error.localizedDescription
+            lastError = message
+            if message.localizedCaseInsensitiveContains("bluetooth") {
+                bluetoothState = "Unavailable"
+                pairingStage = .bluetoothOff
+            } else {
+                pairingStage = .failed(message)
+            }
+            log("Mentra scan error: \(message)")
+        }
     }
 
     func pair(serial: String) {
-        selectedSerial = serial
-
-        guard let pair = seen[serial] else {
+        guard let device = devicesByLabel[serial] else {
+            selectedLabel = serial
             pairingStage = .waitingForBoth(serial)
-            return
-        }
-        guard let left = pair.left, let right = pair.right else {
-            pairingStage = .waitingForBoth(serial)
+            scan()
             return
         }
 
-        connectPair(serial: serial, left: left, right: right)
-    }
-
-    private func connectKnownPair(serial: String) -> Bool {
-        guard
-            let leftID = UserDefaults.standard.string(forKey: leftUUIDKey).flatMap(UUID.init(uuidString:)),
-            let rightID = UserDefaults.standard.string(forKey: rightUUIDKey).flatMap(UUID.init(uuidString:))
-        else { return false }
-
-        guard
-            let left = central.retrievePeripherals(withIdentifiers: [leftID]).first,
-            let right = central.retrievePeripherals(withIdentifiers: [rightID]).first
-        else { return false }
-
-        seen[serial] = (left, right, left.name, right.name)
-        refreshCandidates()
-        connectPair(serial: serial, left: left, right: right)
-        return true
-    }
-
-    private func connectPair(serial: String, left: CBPeripheral, right: CBPeripheral) {
-        central.stopScan()
-        resetLiveConnectionState()
-
-        selectedSerial = serial
-        leftPeripheral = left
-        rightPeripheral = right
-        left.delegate = self
-        right.delegate = self
-
+        selectedLabel = serial
+        lastError = nil
+        scanSession?.cancel()
+        scanSession = nil
         pairingStage = .connecting(serial)
-        log("Mentra transport connecting LEFT + RIGHT for \(serial)")
+        bluetoothState = "Mentra SDK connecting"
+        log("Mentra connect: \(device.name)")
 
-        central.connect(left, options: [
-            CBConnectPeripheralOptionNotifyOnConnectionKey: true,
-            CBConnectPeripheralOptionNotifyOnDisconnectionKey: true
-        ])
-        central.connect(right, options: [
-            CBConnectPeripheralOptionNotifyOnConnectionKey: true,
-            CBConnectPeripheralOptionNotifyOnDisconnectionKey: true
-        ])
+        do {
+            try sdk.connect(
+                to: device,
+                options: ConnectOptions(
+                    saveAsDefault: true,
+                    cancelExistingConnectionAttempt: true,
+                    requiresAncs: false
+                )
+            )
+        } catch {
+            let message = error.localizedDescription
+            lastError = message
+            pairingStage = .failed(message)
+            log("Mentra connect error: \(message)")
+        }
     }
 
     func forgetAndRescan() {
-        intentionalDisconnect = true
-        heartbeatTask?.cancel()
-        audioWatchdogTask?.cancel()
-        reconnectTask?.cancel()
-
-        if let leftPeripheral { central.cancelPeripheralConnection(leftPeripheral) }
-        if let rightPeripheral { central.cancelPeripheralConnection(rightPeripheral) }
-
-        UserDefaults.standard.removeObject(forKey: rememberedSerialKey)
-        UserDefaults.standard.removeObject(forKey: leftUUIDKey)
-        UserDefaults.standard.removeObject(forKey: rightUUIDKey)
-
-        selectedSerial = nil
-        connectedSerial = nil
-        connectedName = nil
-        seen.removeAll()
-        candidates.removeAll()
-        resetLiveConnectionState()
-
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 350_000_000)
-            self?.intentionalDisconnect = false
-            self?.scan()
-        }
-    }
-
-    private func scheduleReconnect() {
-        guard !intentionalDisconnect else { return }
-        reconnectTask?.cancel()
-
-        reconnectTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            var attempt = 0
-            while !Task.isCancelled && !self.isReady {
-                attempt += 1
-                self.log("Mentra reconnect attempt \(attempt)")
-
-                if let serial = self.selectedSerial,
-                   self.connectKnownPair(serial: serial) {
-                    // Connection callbacks decide when ready.
-                } else {
-                    self.scan()
-                }
-
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-            }
-        }
-    }
-
-    private func refreshCandidates() {
-        candidates = seen.map { serial, pair in
-            G2PairCandidate(
-                serial: serial,
-                leftName: pair.leftName,
-                rightName: pair.rightName
-            )
-        }.sorted { $0.serial < $1.serial }
-    }
-
-    private func resetLiveConnectionState() {
-        leftWrite = nil
-        rightWrite = nil
-        leftNotify = nil
-        rightNotify = nil
-        leftAudio = nil
-        rightAudio = nil
-
-        leftWriteQueue.removeAll()
-        rightWriteQueue.removeAll()
-        leftDraining = false
-        rightDraining = false
-
-        authStarted = false
-        leftAuthenticated = false
-        rightAuthenticated = false
+        modelWatchTask?.cancel()
+        modelWatchTask = nil
+        sdk.setMicState(
+            enabled: false,
+            useGlassesMic: true,
+            sendTranscript: false,
+            sendLc3Data: false
+        )
+        sdk.forget()
+        asr.unload()
 
         runtimeStarted = false
-        pageCreated = false
-        evenHubMicActive = false
         micArmed = false
-        recoveryInFlight = false
+        connectedName = nil
+        connectedSerial = nil
+        selectedLabel = nil
+        lastAudioAt = nil
+        audioPackets = 0
+        audioBytes = 0
+        pcmChunks = 0
+        pcmBytes = 0
+        pcmRMS = 0
 
-        lastAudioFrame = nil
-        heartbeatTask?.cancel()
-        heartbeatTask = nil
-        audioWatchdogTask?.cancel()
-        audioWatchdogTask = nil
-        pcmConverter.resetDecoder()
-    }
-
-    // MARK: - Mentra-style paced write queues
-
-    private func enqueue(_ packets: [Data], right: Bool) {
-        guard !packets.isEmpty else { return }
-
-        if right {
-            rightWriteQueue.append(contentsOf: packets)
-            startDrain(right: true)
-        } else {
-            leftWriteQueue.append(contentsOf: packets)
-            startDrain(right: false)
-        }
-    }
-
-    private func startDrain(right: Bool) {
-        if right {
-            if rightDraining { return }
-            rightDraining = true
-        } else {
-            if leftDraining { return }
-            leftDraining = true
-        }
-
-        Task { @MainActor [weak self] in
-            await self?.drainLoop(right: right)
-        }
-    }
-
-    private func drainLoop(right: Bool) async {
-        while true {
-            guard
-                let peripheral = right ? rightPeripheral : leftPeripheral,
-                let characteristic = right ? rightWrite : leftWrite
-            else {
-                if right {
-                    rightWriteQueue.removeAll()
-                    rightDraining = false
-                } else {
-                    leftWriteQueue.removeAll()
-                    leftDraining = false
-                }
-                return
-            }
-
-            if right ? rightWriteQueue.isEmpty : leftWriteQueue.isEmpty {
-                if right { rightDraining = false }
-                else { leftDraining = false }
-                return
-            }
-
-            let packet = right
-                ? rightWriteQueue.removeFirst()
-                : leftWriteQueue.removeFirst()
-
-            peripheral.writeValue(packet, for: characteristic, type: .withoutResponse)
-            try? await Task.sleep(nanoseconds: writePaceNanos)
-        }
-    }
-
-    private func send(
-        service: UInt8,
-        payload: Data,
-        reserve: Bool = false,
-        toLeft: Bool,
-        toRight: Bool
-    ) async {
-        let packets = codec.packets(service: service, payload: payload, reserve: reserve)
-
-        if toLeft { enqueue(packets, right: false) }
-        if toRight { enqueue(packets, right: true) }
-
-        // Preserve sequencing between protocol phases without depending on
-        // CoreBluetooth's write-ready callback, matching Mentra's G2 drainer.
-        let settle = UInt64(max(1, packets.count)) * writePaceNanos
-        try? await Task.sleep(nanoseconds: settle)
-    }
-
-    // MARK: - Auth / runtime
-
-    private func runAuthSequenceIfReady() {
-        guard
-            !authStarted,
-            leftWrite != nil,
-            rightWrite != nil,
-            rightNotify != nil,
-            let serial = selectedSerial
-        else { return }
-
-        authStarted = true
-        pairingStage = .authenticating(serial)
-        log("Both lenses initialized; starting G2 auth")
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-
-            await self.send(
-                service: G2NativeProtocol.deviceSettingsService,
-                payload: G2NativeProtocol.auth(magic: self.codec.nextMagic()),
-                toLeft: true,
-                toRight: false
-            )
-            try? await Task.sleep(nanoseconds: 200_000_000)
-
-            await self.send(
-                service: G2NativeProtocol.deviceSettingsService,
-                payload: G2NativeProtocol.auth(magic: self.codec.nextMagic()),
-                toLeft: false,
-                toRight: true
-            )
-            try? await Task.sleep(nanoseconds: 200_000_000)
-
-            await self.send(
-                service: G2NativeProtocol.deviceSettingsService,
-                payload: G2NativeProtocol.pipeRoleChange(magic: self.codec.nextMagic()),
-                toLeft: false,
-                toRight: true
-            )
-            try? await Task.sleep(nanoseconds: 200_000_000)
-
-            await self.send(
-                service: G2NativeProtocol.deviceSettingsService,
-                payload: G2NativeProtocol.timeSync(magic: self.codec.nextMagic()),
-                toLeft: true,
-                toRight: true
-            )
-            try? await Task.sleep(nanoseconds: 200_000_000)
-
-            await self.send(
-                service: G2NativeProtocol.onboardingService,
-                payload: G2NativeProtocol.onboardingFinish(magic: self.codec.nextMagic()),
-                reserve: true,
-                toLeft: false,
-                toRight: true
-            )
-
-            self.log("G2 auth sequence sent")
-        }
-    }
-
-    private func processControl(_ raw: Data, from peripheral: CBPeripheral) {
-        controlPackets += 1
-        let side = peripheral === leftPeripheral ? "L" : "R"
-
-        guard let (service, payload) = codec.receive(raw, side: side) else { return }
-
-        if service == G2NativeProtocol.evenHubService {
-            if G2NativeProtocol.evenHubPageWasShutdown(payload) {
-                pageCreated = false
-                evenHubMicActive = false
-                micArmed = false
-                log("Mentra lifecycle: glasses shut down EvenHub page")
-                recoverPageAndMic(reason: "firmware page shutdown")
-            }
-            return
-        }
-
-        guard
-            service == G2NativeProtocol.deviceSettingsService,
-            let authenticated = G2NativeProtocol.parseAuthResponse(payload)
-        else { return }
-
-        log("Auth response \(side): \(authenticated ? "OK" : "DENIED")")
-
-        if authenticated {
-            if side == "L" { leftAuthenticated = true }
-            else { rightAuthenticated = true }
-        }
-
-        guard leftAuthenticated && rightAuthenticated,
-              let serial = selectedSerial,
-              !isReady
-        else { return }
-
-        connectedSerial = serial
-        connectedName = rightPeripheral?.name ?? leftPeripheral?.name ?? "Even G2"
-        pairingStage = .ready(serial)
-
-        UserDefaults.standard.set(serial, forKey: rememberedSerialKey)
-        if let id = leftPeripheral?.identifier.uuidString {
-            UserDefaults.standard.set(id, forKey: leftUUIDKey)
-        }
-        if let id = rightPeripheral?.identifier.uuidString {
-            UserDefaults.standard.set(id, forKey: rightUUIDKey)
-        }
-
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        log("PAIRING PASS: Mentra-style dual-lens session authenticated")
-        startRuntimeSession()
-    }
-
-    private func startRuntimeSession() {
-        guard !runtimeStarted else { return }
-        runtimeStarted = true
-        micIntent = true
-
-        startHeartbeats()
-        startAudioWatchdog()
-        recoverPageAndMic(reason: "initial runtime")
-    }
-
-    private func startHeartbeats() {
-        heartbeatTask?.cancel()
-        heartbeatTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled && self.isReady {
-                try? await Task.sleep(nanoseconds: 10_000_000_000)
-                guard !Task.isCancelled, self.isReady else { break }
-                await self.sendHeartbeats()
-            }
-        }
-    }
-
-    private func startAudioWatchdog() {
-        audioWatchdogTask?.cancel()
-        audioWatchdogTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-
-            while !Task.isCancelled && self.isReady {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                guard !Task.isCancelled, self.isReady else { break }
-
-                let stale = self.audioIsStale(threshold: 2.5)
-                if stale {
-                    self.log("Mentra watchdog: G2 audio stale while BLE is still connected")
-                    self.recoverPageAndMic(reason: "audio watchdog")
-                }
-            }
-        }
-    }
-
-    private func sendHeartbeats() async {
-        await send(
-            service: G2NativeProtocol.deviceSettingsService,
-            payload: G2NativeProtocol.baseHeartbeat(magic: codec.nextMagic()),
-            toLeft: true,
-            toRight: true
-        )
-
-        await send(
-            service: G2NativeProtocol.evenHubService,
-            payload: G2NativeProtocol.evenHubHeartbeat(magic: codec.nextMagic()),
-            reserve: true,
-            toLeft: false,
-            toRight: true
-        )
-    }
-
-    private func audioIsStale(threshold: TimeInterval) -> Bool {
-        guard micIntent else { return false }
-        guard let lastAudioAt else { return true }
-        return Date().timeIntervalSince(lastAudioAt) > threshold
-    }
-
-    private func recoverPageAndMic(reason: String) {
-        guard isReady else { return }
-
-        let now = Date()
-        if recoveryInFlight { return }
-        if now.timeIntervalSince(lastRecoveryAt) < recoveryDebounce { return }
-
-        recoveryInFlight = true
-        lastRecoveryAt = now
-        log("Mentra recovery (\(reason)): rebuilding page + mic")
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.recoveryInFlight = false }
-
-            await self.sendHeartbeats()
-
-            if !self.pageCreated {
-                let initialText: String
-                if !self.asr.partialText.isEmpty {
-                    initialText = self.asr.partialText
-                } else if !self.asr.finalText.isEmpty {
-                    initialText = self.asr.finalText
-                } else if self.asr.state.isReady {
-                    initialText = "Listening…"
-                } else {
-                    initialText = "G2 LABS\nImport + activate a model"
-                }
-
-                self.lastCaptionText = initialText
-                await self.send(
-                    service: G2NativeProtocol.evenHubService,
-                    payload: G2NativeProtocol.createCaptionPage(
-                        text: initialText,
-                        magic: self.codec.nextMagic()
-                    ),
-                    reserve: true,
-                    toLeft: false,
-                    toRight: true
-                )
-                self.pageCreated = true
-                self.log("Mentra lifecycle: EvenHub caption page created")
-                try? await Task.sleep(nanoseconds: 350_000_000)
-            }
-
-            if self.micIntent {
-                await self.restartMic()
-            }
-        }
-    }
-
-    private func restartMic() async {
-        guard isReady, pageCreated else {
-            pageCreated = false
-            evenHubMicActive = false
-            micArmed = false
-            return
-        }
-
-        // Mentra deliberately forces a new audio edge when the stream is stale,
-        // even if its previous logical mic state was already "on".
-        await send(
-            service: G2NativeProtocol.evenHubService,
-            payload: G2NativeProtocol.audioControl(
-                enabled: false,
-                magic: codec.nextMagic()
-            ),
-            reserve: true,
-            toLeft: false,
-            toRight: true
-        )
-        evenHubMicActive = false
-        micArmed = false
-
-        try? await Task.sleep(nanoseconds: 220_000_000)
-
-        await send(
-            service: G2NativeProtocol.evenHubService,
-            payload: G2NativeProtocol.audioControl(
-                enabled: true,
-                magic: codec.nextMagic()
-            ),
-            reserve: true,
-            toLeft: false,
-            toRight: true
-        )
-
-        evenHubMicActive = true
-        micArmed = true
-        log("Mentra lifecycle: G2 microphone re-armed OFF→ON")
+        log("Mentra connection forgotten")
+        scan()
     }
 
     func ensureRuntimeAlive(reason: String) {
         guard isReady else { return }
 
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.sendHeartbeats()
+        let staleAudio: Bool
+        if let lastAudioAt {
+            staleAudio = Date().timeIntervalSince(lastAudioAt) > 2.0
+        } else {
+            staleAudio = true
+        }
 
-            if !self.pageCreated || !self.evenHubMicActive || self.audioIsStale(threshold: 1.5) {
-                self.recoverPageAndMic(reason: reason)
-            }
+        log("Mentra runtime check: \(reason) • staleAudio=\(staleAudio)")
+
+        // Do not hand-roll an EvenHub OFF/ON edge here. Re-enabling through the
+        // Mentra SDK enters its G2 restartMic/rebuildPage recovery path, which
+        // owns page liveness, mic intent, heartbeats and both-lens recovery.
+        if !micArmed || staleAudio {
+            sdk.setMicState(
+                enabled: true,
+                useGlassesMic: true,
+                sendTranscript: false,
+                sendLc3Data: true
+            )
+            micArmed = true
+            log(staleAudio ? "Mentra requested G2 mic/session recovery" : "Mentra G2 mic enabled")
         }
     }
 
     func applicationDidBecomeActive() {
-        ensureRuntimeAlive(reason: "app became active")
+        ensureRuntimeAlive(reason: "app returned active")
     }
 
-    // MARK: - ASR / captions
-
     func activateModel(_ model: ASRModel, directory: URL) {
+        ensureRuntimeAlive(reason: "before ASR model load")
         log("Loading ASR model: \(model.name) [\(model.family.rawValue)]")
 
         asr.load(
@@ -691,334 +249,254 @@ final class G2Transport: NSObject, ObservableObject {
             language: "it-IT"
         )
 
-        Task { @MainActor [weak self] in
+        modelWatchTask?.cancel()
+        modelWatchTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            self.lastCaptionText = "Loading \(model.name)…"
-            if self.pageCreated {
-                await self.updateCaptionOnGlasses(self.lastCaptionText)
-            }
+            await self.writeGlassesText("Loading \(model.name)…")
 
-            // Keep the Mentra-managed runtime alive while ORT builds the model.
-            var seconds = 0
-            while case .loading = self.asr.state, seconds < 90 {
-                if seconds % 2 == 0 {
-                    await self.sendHeartbeats()
-                }
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                seconds += 1
+            var ticks = 0
+            while case .loading = self.asr.state, ticks < 240, !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                ticks += 1
             }
+            guard !Task.isCancelled else { return }
 
             self.ensureRuntimeAlive(reason: "ASR model load finished")
+
+            if self.asr.state.isReady {
+                await self.writeGlassesText("Listening…")
+            } else if case .failed(let message) = self.asr.state {
+                await self.writeGlassesText("ASR error\n\(String(message.prefix(72)))")
+            }
+        }
+    }
+
+    private func restoreOrScan() {
+        if let device = sdk.defaultDevice, device.model == .g2 {
+            selectedLabel = label(for: device)
+            bluetoothState = "Mentra SDK reconnecting"
+            pairingStage = .connecting(selectedLabel ?? device.name)
+            log("Mentra default G2 found; attempting reconnect")
+            do {
+                try sdk.connectDefault(
+                    options: ConnectOptions(
+                        saveAsDefault: true,
+                        cancelExistingConnectionAttempt: true,
+                        requiresAncs: false
+                    )
+                )
+            } catch {
+                log("Mentra default reconnect deferred: \(error.localizedDescription)")
+                scan()
+            }
+        } else {
+            scan()
+        }
+    }
+
+    private func consumeScanResults(_ devices: [Device]) {
+        for device in devices where device.model == .g2 {
+            let key = label(for: device)
+            devicesByLabel[key] = device
+        }
+        candidates = devicesByLabel
+            .map { key, device in G2PairCandidate(serial: key, displayName: device.name) }
+            .sorted { $0.serial.localizedCaseInsensitiveCompare($1.serial) == .orderedAscending }
+    }
+
+    private func label(for device: Device) -> String {
+        let name = device.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? device.id : name
+    }
+
+    private func startRuntimeSession() {
+        guard !runtimeStarted else {
+            ensureRuntimeAlive(reason: "Mentra state refreshed")
+            return
+        }
+        runtimeStarted = true
+
+        sdk.setMicState(
+            enabled: true,
+            useGlassesMic: true,
+            sendTranscript: false,
+            sendLc3Data: true
+        )
+        micArmed = true
+        log("Mentra owns G2 mic + EvenHub lifecycle")
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.writeGlassesText(
+                self.asr.state.isReady
+                    ? "Listening…"
+                    : "G2 LABS\nImport + activate a model"
+            )
         }
     }
 
     private func displayCaption(_ text: String, isFinal: Bool) {
         guard !text.isEmpty, isReady else { return }
-
         captionUpdates += 1
-        lastCaptionText = text
         log("\(isFinal ? "FINAL" : "PARTIAL"): \(text.prefix(90))")
 
         Task { @MainActor [weak self] in
-            guard let self else { return }
-
-            if !self.pageCreated {
-                self.recoverPageAndMic(reason: "caption while page absent")
-                return
-            }
-
-            await self.updateCaptionOnGlasses(text)
+            await self?.writeGlassesText(text)
         }
     }
 
-    private func updateCaptionOnGlasses(_ text: String) async {
-        guard pageCreated else { return }
-
-        await send(
-            service: G2NativeProtocol.evenHubService,
-            payload: G2NativeProtocol.updateCaption(
-                text: text,
-                magic: codec.nextMagic()
-            ),
-            reserve: true,
-            toLeft: false,
-            toRight: true
-        )
+    private func writeGlassesText(_ text: String) async {
+        do {
+            try await sdk.displayText(text, x: 0, y: 0, size: 24)
+        } catch {
+            let message = error.localizedDescription
+            lastError = message
+            log("Mentra display error: \(message)")
+        }
     }
 
-    // MARK: - G2 microphone
-
-    private func handleAudioPacket(_ data: Data) {
-        audioPackets += 1
-        audioBytes += data.count
-        lastAudioAt = Date()
-
-        let usableLength = min(data.count, 200)
-        guard usableLength >= 40 else {
-            log("AUDIO packet too short: \(data.count) bytes")
-            return
-        }
-
-        let audio = Data(data.prefix(usableLength))
-        if lastAudioFrame == audio { return }
-        lastAudioFrame = audio
-
-        let pcm = pcmConverter.decode(audio, frameSize: 40) as Data
-        guard !pcm.isEmpty else {
-            log("LC3 decode returned 0 PCM bytes")
-            return
-        }
-
+    private func handlePcm(_ pcm: Data) {
+        guard !pcm.isEmpty else { return }
         pcmChunks += 1
         pcmBytes += Int64(pcm.count)
         pcmRMS = Self.rms(ofPCM16LE: pcm)
+        lastAudioAt = Date()
         asr.acceptPCM(pcm)
     }
 
     private static func rms(ofPCM16LE data: Data) -> Double {
         let count = data.count / 2
         guard count > 0 else { return 0 }
-
         let meanSquare: Double = data.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return 0 }
             let samples = base.bindMemory(to: Int16.self, capacity: count)
             var sum = 0.0
-
             for i in 0..<count {
-                let value = Double(Int16(littleEndian: samples[i])) / 32768.0
-                sum += value * value
+                let v = Double(Int16(littleEndian: samples[i])) / 32768.0
+                sum += v * v
             }
-
             return sum / Double(count)
         }
-
         return sqrt(meanSquare)
     }
 
     private func log(_ text: String) {
-        events.insert(
-            "\(Date().formatted(date: .omitted, time: .standard))  \(text)",
-            at: 0
-        )
+        events.insert("\(Date().formatted(date: .omitted, time: .standard))  \(text)", at: 0)
         if events.count > 180 {
             events.removeLast(events.count - 180)
         }
     }
 }
 
-// MARK: - CBCentralManagerDelegate
-
-extension G2Transport: CBCentralManagerDelegate {
-    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        Task { @MainActor in
-            switch central.state {
-            case .poweredOn:
-                bluetoothState = "On"
-                scan()
-            case .poweredOff:
-                bluetoothState = "Off"
-                pairingStage = .bluetoothOff
-            case .unauthorized:
-                bluetoothState = "Unauthorized"
-                pairingStage = .failed("Bluetooth permission is not available.")
-            case .unsupported:
-                bluetoothState = "Unsupported"
-                pairingStage = .failed("Bluetooth is unsupported on this device.")
-            default:
-                bluetoothState = "Starting"
-            }
-
-            log("Bluetooth state: \(bluetoothState)")
-        }
+extension G2Transport: MentraBluetoothSDKDelegate {
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdate state: MentraBluetoothState) {
+        bluetoothState = state.glasses.connected ? "Mentra SDK connected" : "Mentra SDK ready"
     }
 
-    nonisolated func centralManager(
-        _ central: CBCentralManager,
-        didDiscover peripheral: CBPeripheral,
-        advertisementData: [String: Any],
-        rssi RSSI: NSNumber
-    ) {
-        guard
-            let name = peripheral.name
-                ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String,
-            name.contains("G2"),
-            let manufacturerData =
-                advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-            let serial = G2NativeProtocol.serial(from: manufacturerData)
-        else { return }
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
+        if glasses.connected {
+            let device = glasses.device
+            let identifier =
+                device?.serialNumber
+                ?? selectedLabel
+                ?? device?.bluetoothName
+                ?? "Even G2"
 
-        Task { @MainActor in
-            var pair = seen[serial] ?? (nil, nil, nil, nil)
+            connectedSerial = device?.serialNumber ?? selectedLabel
+            connectedName = device?.bluetoothName ?? "Even G2"
+            bluetoothState = "Mentra SDK connected"
 
-            if name.contains("_L_") {
-                pair.left = peripheral
-                pair.leftName = name
-            } else if name.contains("_R_") {
-                pair.right = peripheral
-                pair.rightName = name
+            if glasses.ready {
+                pairingStage = .ready(identifier)
+                startRuntimeSession()
             } else {
-                return
+                pairingStage = .authenticating(identifier)
             }
-
-            seen[serial] = pair
-            refreshCandidates()
-            log("Found \(name) • SN \(serial) • RSSI \(RSSI)")
-
-            guard selectedSerial == serial else { return }
-
-            if let left = pair.left, let right = pair.right {
-                connectPair(serial: serial, left: left, right: right)
-            } else {
-                pairingStage = .waitingForBoth(serial)
-            }
-        }
-    }
-
-    nonisolated func centralManager(
-        _ central: CBCentralManager,
-        didConnect peripheral: CBPeripheral
-    ) {
-        Task { @MainActor in
-            log("Connected BLE: \(peripheral.name ?? peripheral.identifier.uuidString)")
-            peripheral.delegate = self
-            peripheral.discoverServices(nil)
-        }
-    }
-
-    nonisolated func centralManager(
-        _ central: CBCentralManager,
-        didFailToConnect peripheral: CBPeripheral,
-        error: Error?
-    ) {
-        Task { @MainActor in
-            let message = error?.localizedDescription ?? "Unknown connection failure"
-            lastError = message
-            pairingStage = .failed(message)
-            log("Connect failed: \(message)")
-            scheduleReconnect()
-        }
-    }
-
-    nonisolated func centralManager(
-        _ central: CBCentralManager,
-        didDisconnectPeripheral peripheral: CBPeripheral,
-        error: Error?
-    ) {
-        Task { @MainActor in
-            guard peripheral === leftPeripheral || peripheral === rightPeripheral else {
-                return
-            }
-
-            let message = error?.localizedDescription ?? "G2 disconnected"
-            log("Mentra transport disconnect: \(message)")
-
+        } else {
+            let prior = connectedSerial ?? selectedLabel
             connectedName = nil
             connectedSerial = nil
+            runtimeStarted = false
+            micArmed = false
+            bluetoothState = "Mentra SDK reconnecting"
 
-            // Mentra resets both halves after either side disappears so the next
-            // session is always a coherent L+R pair.
-            if let other = peripheral === leftPeripheral ? rightPeripheral : leftPeripheral,
-               other.state == .connected {
-                central.cancelPeripheralConnection(other)
-            }
-
-            resetLiveConnectionState()
-
-            if intentionalDisconnect { return }
-
-            if let serial = selectedSerial {
-                pairingStage = .waitingForBoth(serial)
+            if let prior {
+                pairingStage = .connecting(prior)
+                log("Mentra reports G2 temporarily disconnected; SDK recovery remains active")
             } else {
                 pairingStage = .scanning
             }
-
-            scheduleReconnect()
-        }
-    }
-}
-
-// MARK: - CBPeripheralDelegate
-
-extension G2Transport: CBPeripheralDelegate {
-    nonisolated func peripheral(
-        _ peripheral: CBPeripheral,
-        didDiscoverServices error: Error?
-    ) {
-        Task { @MainActor in
-            if let error {
-                lastError = error.localizedDescription
-                pairingStage = .failed(error.localizedDescription)
-                return
-            }
-
-            for service in peripheral.services ?? [] {
-                peripheral.discoverCharacteristics(nil, for: service)
-            }
         }
     }
 
-    nonisolated func peripheral(
-        _ peripheral: CBPeripheral,
-        didDiscoverCharacteristicsFor service: CBService,
-        error: Error?
-    ) {
-        Task { @MainActor in
-            if let error {
-                lastError = error.localizedDescription
-                pairingStage = .failed(error.localizedDescription)
-                return
-            }
-
-            let isLeft = peripheral === leftPeripheral
-
-            for characteristic in service.characteristics ?? [] {
-                if characteristic.uuid == Self.writeUUID {
-                    if isLeft { leftWrite = characteristic }
-                    else { rightWrite = characteristic }
-                    log("\(isLeft ? "LEFT" : "RIGHT") write ready")
-                } else if characteristic.uuid == Self.notifyUUID {
-                    if isLeft { leftNotify = characteristic }
-                    else { rightNotify = characteristic }
-                    peripheral.setNotifyValue(true, for: characteristic)
-                    log("\(isLeft ? "LEFT" : "RIGHT") control notify armed")
-                } else if characteristic.uuid == Self.audioUUID {
-                    if isLeft { leftAudio = characteristic }
-                    else { rightAudio = characteristic }
-                    peripheral.setNotifyValue(true, for: characteristic)
-                    log("\(isLeft ? "LEFT" : "RIGHT") audio notify armed")
-                }
-            }
-
-            runAuthSequenceIfReady()
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateSdkState sdkState: PhoneSdkRuntimeState) {
+        if sdkState.searching {
+            bluetoothState = "Mentra SDK scanning"
         }
     }
 
-    nonisolated func peripheral(
-        _ peripheral: CBPeripheral,
-        didUpdateValueFor characteristic: CBCharacteristic,
-        error: Error?
-    ) {
-        guard error == nil, let data = characteristic.value else { return }
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateScan scan: BluetoothScanState) {
+        consumeScanResults(scan.devices.filter { $0.model == .g2 })
+    }
 
-        Task { @MainActor in
-            if characteristic.uuid == Self.audioUUID {
-                handleAudioPacket(data)
-            } else if characteristic.uuid == Self.notifyUUID {
-                processControl(data, from: peripheral)
-            }
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: Device) {
+        guard device.model == .g2 else { return }
+        let key = label(for: device)
+        devicesByLabel[key] = device
+        consumeScanResults(Array(devicesByLabel.values))
+        log("Mentra discovered G2: \(device.name)")
+    }
+
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didStopScan reason: ScanStopReason) {
+        log("Mentra scan stopped: \(reason)")
+    }
+
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
+        controlPackets += 1
+        if case .micHealth(let health) = event {
+            log("Mentra mic health: \(health.description)")
         }
     }
 
-    nonisolated func peripheralIsReady(
-        toSendWriteWithoutResponse peripheral: CBPeripheral
-    ) {
-        Task { @MainActor in
-            if peripheral === rightPeripheral {
-                startDrain(right: true)
-            } else if peripheral === leftPeripheral {
-                startDrain(right: false)
-            }
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm event: MicPcmEvent) {
+        handlePcm(event.pcm)
+    }
+
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 event: MicLc3Event) {
+        guard !event.lc3.isEmpty else { return }
+        audioPackets += 1
+        audioBytes += event.lc3.count
+        lastAudioAt = Date()
+    }
+
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didChangeDefaultDevice device: Device?) {
+        guard let device, device.model == .g2 else { return }
+        selectedLabel = label(for: device)
+    }
+
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didLog message: String) {
+        // Keep useful Mentra lifecycle messages while avoiding thousands of noisy
+        // audio/debug lines in the in-app diagnostics list.
+        let lower = message.lowercased()
+        if lower.contains("g2:")
+            || lower.contains("mic")
+            || lower.contains("pair")
+            || lower.contains("connect")
+            || lower.contains("recover")
+            || lower.contains("heartbeat")
+        {
+            log("MENTRA • \(message)")
+        }
+    }
+
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didFail error: BluetoothSdkError) {
+        lastError = error.message
+        if error.code.localizedCaseInsensitiveContains("bluetooth") {
+            bluetoothState = "Unavailable"
+            pairingStage = .bluetoothOff
+        } else {
+            log("Mentra SDK error [\(error.code)]: \(error.message)")
         }
     }
 }
