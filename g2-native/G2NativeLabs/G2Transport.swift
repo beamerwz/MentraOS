@@ -103,12 +103,12 @@ final class G2Transport: NSObject, ObservableObject {
     }
 
     deinit {
-        scanSession?.cancel()
+        scanSession?.stop()
         modelWatchTask?.cancel()
     }
 
     func scan() {
-        scanSession?.cancel()
+        scanSession?.stop()
         scanSession = nil
         devicesByLabel.removeAll()
         candidates.removeAll()
@@ -156,7 +156,7 @@ final class G2Transport: NSObject, ObservableObject {
 
         selectedLabel = serial
         lastError = nil
-        scanSession?.cancel()
+        scanSession?.stop()
         scanSession = nil
         pairingStage = .connecting(serial)
         bluetoothState = "Mentra SDK connecting"
