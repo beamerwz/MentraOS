@@ -6,21 +6,46 @@ options:
 settings:
   base:
     SWIFT_VERSION: 5.9
+
 targets:
   G2NativeLabs:
     type: application
     platform: iOS
     sources:
-      - G2NativeLabs
+      - path: G2NativeLabs
+      - path: ../mobile/modules/bluetooth-sdk/ios/Packages/CoreObjC
+        excludes:
+          - CoreObjC.xcodeproj
+          - include
+      - path: ../mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/SherpaOnnx.swift
+      - path: ../mobile/modules/bluetooth-sdk/ios/Source/stt/SherpaOnnxSafeBridge.h
+      - path: ../mobile/modules/bluetooth-sdk/ios/Source/stt/SherpaOnnxSafeBridge.mm
+    dependencies:
+      - framework: ../mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/sherpa-onnx.xcframework
+        embed: false
+      - framework: ../mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/onnxruntime.xcframework
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.beamerwz.g2nativelabs
         PRODUCT_NAME: G2 LABS Native
         TARGETED_DEVICE_FAMILY: "1"
         SUPPORTS_MACCATALYST: NO
+        SWIFT_OBJC_BRIDGING_HEADER: G2NativeLabs/G2NativeLabs-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/../mobile/modules/bluetooth-sdk/ios/Packages/CoreObjC"
+          - "$(SRCROOT)/../mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/sherpa-onnx.xcframework/ios-arm64/Headers"
+          - "$(SRCROOT)/../mobile/modules/bluetooth-sdk/ios/Source"
+        CLANG_CXX_LANGUAGE_STANDARD: c++17
+        CLANG_CXX_LIBRARY: libc++
+        GCC_ENABLE_CPP_EXCEPTIONS: YES
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-lc++"
+          - "-lbz2"
         INFOPLIST_KEY_CFBundleDisplayName: G2 LABS Native
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: G2 LABS uses Bluetooth to pair directly with both sides of your G2 glasses.
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: G2 LABS can use microphone audio for local speech recognition diagnostics.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: G2 LABS processes G2 microphone audio locally for offline speech recognition.
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UIRequiresFullScreen: YES
