@@ -67,11 +67,30 @@ jobs:
         working-directory: g2-native
         run: xcodegen generate
 
+      - name: Install Mentra Bluetooth SDK pods
+        working-directory: g2-native
+        run: |
+          set -euo pipefail
+          if ! command -v pod >/dev/null 2>&1; then
+            sudo gem install cocoapods --no-document
+          fi
+          pod install --repo-update
+
       - name: Build unsigned device app
         working-directory: g2-native
         run: |
           set -euo pipefail
-          xcodebuild             -project G2NativeLabs.xcodeproj             -scheme G2NativeLabs             -configuration Release             -destination 'generic/platform=iOS'             -derivedDataPath build             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             DEVELOPMENT_TEAM=""             build | tee ../g2-native-xcodebuild.log
+          xcodebuild \
+            -workspace G2NativeLabs.xcworkspace \
+            -scheme G2NativeLabs \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build | tee ../g2-native-xcodebuild.log
 
       - name: Package IPA
         working-directory: g2-native
