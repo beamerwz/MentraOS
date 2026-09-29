@@ -1,0 +1,74 @@
+name: G2LABSStandalone
+options:
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+packages:
+  SWCompression:
+    url: https://github.com/tsolomko/SWCompression.git
+    from: 4.8.6
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    from: 0.9.19
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    CLANG_CXX_LANGUAGE_STANDARD: "c++17"
+    CLANG_CXX_LIBRARY: "libc++"
+    GCC_ENABLE_CPP_EXCEPTIONS: YES
+
+targets:
+  G2LABSStandalone:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - Vendor
+    resources:
+      - Resources
+    dependencies:
+      - framework: Frameworks/sherpa-onnx.xcframework
+        embed: false
+      - framework: Frameworks/onnxruntime.xcframework
+        embed: false
+      - package: SWCompression
+      - package: ZIPFoundation
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.beamerwz.g2labs.standalone
+        PRODUCT_NAME: G2 LABS
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        SWIFT_OBJC_BRIDGING_HEADER: Sources/Bridge/G2Labs-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/Frameworks/sherpa-onnx.xcframework/ios-arm64/Headers"
+          - "$(SRCROOT)/Vendor/CoreObjC"
+          - "$(SRCROOT)/Vendor/CoreObjC/include"
+          - "$(SRCROOT)/Vendor/Sherpa"
+        SWIFT_INCLUDE_PATHS:
+          - "$(SRCROOT)/Vendor/libbz2"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-lc++"
+          - "-lbz2"
+          - "-framework"
+          - "Accelerate"
+          - "-framework"
+          - "CoreML"
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: G2 LABS
+        UILaunchScreen: {}
+        NSBluetoothAlwaysUsageDescription: G2 LABS connects directly to Even G2 glasses for microphone audio and captions.
+        NSMicrophoneUsageDescription: G2 LABS can use the iPhone microphone to test speech models independently from the glasses.
+        UIBackgroundModes:
+          - bluetooth-central
+          - audio
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
