@@ -37,7 +37,8 @@ Pod::Spec.new do |s|
     'CLANG_CXX_LANGUAGE_STANDARD' => 'c++17',
     'CLANG_CXX_LIBRARY' => 'libc++',
     'GCC_ENABLE_CPP_EXCEPTIONS' => 'YES',
-    'SWIFT_INCLUDE_PATHS' => '$(PODS_TARGET_SRCROOT)/Packages/libbz2'
+    'SWIFT_INCLUDE_PATHS' => '$(PODS_TARGET_SRCROOT)/Packages/libbz2',
+    'HEADER_SEARCH_PATHS' => '$(inherited) "$(PODS_TARGET_SRCROOT)/Packages/SherpaOnnx/CurrentHeaders" "$(PODS_TARGET_SRCROOT)/Packages/SherpaOnnx/sherpa-onnx.xcframework/ios-arm64/Headers"'
   }
 
   # iOS frameworks required by Bluetooth SDK
