@@ -5,8 +5,7 @@ on:
     branches: [g2-native-labs]
     paths:
       - "g2-native/**"
-      - "mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/SherpaOnnx.swift"
-      - "mobile/modules/bluetooth-sdk/ios/Source/stt/SherpaOnnxSafeBridge.*"
+      - "mobile/modules/bluetooth-sdk/ios/**"
       - ".github/workflows/g2-native-ios.yml"
   workflow_dispatch:
 
