@@ -17,6 +17,7 @@ struct G2NativeLabsApp: App {
 
 struct RootView: View {
     @EnvironmentObject var transport: G2Transport
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -27,6 +28,11 @@ struct RootView: View {
             }
         }
         .background(Color.black.ignoresSafeArea())
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                transport.applicationDidBecomeActive()
+            }
+        }
     }
 }
 
