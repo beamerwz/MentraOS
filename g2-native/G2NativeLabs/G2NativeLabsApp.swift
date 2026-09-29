@@ -16,6 +16,21 @@ struct G2NativeLabsApp: App {
 }
 
 struct RootView: View {
+    @EnvironmentObject var transport: G2Transport
+
+    var body: some View {
+        Group {
+            if transport.isReady {
+                MainTabsView()
+            } else {
+                PairingView()
+            }
+        }
+        .background(Color.black.ignoresSafeArea())
+    }
+}
+
+struct MainTabsView: View {
     var body: some View {
         TabView {
             ConnectionView().tabItem { Label("G2", systemImage: "eyeglasses") }
