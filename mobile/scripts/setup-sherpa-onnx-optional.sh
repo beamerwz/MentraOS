@@ -38,6 +38,8 @@ fi
 
 IOS_PKG_DIR="modules/bluetooth-sdk/ios/Packages/SherpaOnnx"
 IOS_MODEL_DIR="$IOS_PKG_DIR/Model"
+ORT_VERSION="1.26.0"
+ORT_XCF_DIR="$IOS_PKG_DIR/onnxruntime.xcframework"
 TMP_DIR=".sherpa_tmp"
 
 mkdir -p "$IOS_MODEL_DIR" "$TMP_DIR"
@@ -56,8 +58,29 @@ else
   ok "✅ XCFramework already present"
 fi
 
+########################################
+# 2. Download matching ONNX Runtime    #
+########################################
+# sherpa-onnx v1.13.3 build-ios.sh pins ORT 1.26.0. Keep this exact
+# runtime next to Sherpa so there is one ABI-compatible ORT implementation.
+if [[ ! -d "$ORT_XCF_DIR" ]]; then
+  msg "📥 Downloading ONNX Runtime $ORT_VERSION XCFramework …"
+  ORT_URL="https://github.com/csukuangfj/onnxruntime-libs/releases/download/v$ORT_VERSION/onnxruntime-ios-static-xcframework-$ORT_VERSION.xcframework.zip"
+  curl -fL --retry 3 "$ORT_URL" -o "$TMP_DIR/ort.zip"
+  unzip -q "$TMP_DIR/ort.zip" -d "$TMP_DIR/ort"
+  FOUND_ORT="$(find "$TMP_DIR/ort" -type d -name 'onnxruntime.xcframework' | head -1)"
+  if [[ -z "$FOUND_ORT" ]]; then
+    err "❌ ONNX Runtime XCFramework not found after extraction"
+    exit 1
+  fi
+  mv "$FOUND_ORT" "$ORT_XCF_DIR"
+  ok "✅ ONNX Runtime $ORT_VERSION ready at $ORT_XCF_DIR"
+else
+  ok "✅ Matching ONNX Runtime already present"
+fi
+
 ################
-# 4. Cleanup   #
+# 3. Cleanup   #
 ################
 rm -rf "$TMP_DIR"
 ok "🎉 Sherpa-ONNX setup complete for iOS & Android"
