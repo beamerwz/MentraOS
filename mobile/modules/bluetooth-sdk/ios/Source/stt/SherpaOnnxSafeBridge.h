@@ -1,10 +1,6 @@
 #pragma once
 
-// Keep this public bridge header independent of Sherpa's private include path.
-// The concrete C API is included only by SherpaOnnxSafeBridge.mm inside the pod target.
-typedef struct SherpaOnnxOnlineRecognizer SherpaOnnxOnlineRecognizer;
-typedef struct SherpaOnnxOnlineStream SherpaOnnxOnlineStream;
-typedef struct SherpaOnnxOnlineRecognizerConfig SherpaOnnxOnlineRecognizerConfig;
+#include "sherpa-onnx/c-api/c-api.h"
 
 #ifdef __cplusplus
 extern "C" {
