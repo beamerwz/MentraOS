@@ -131,9 +131,8 @@ class STTTools {
 
     static func recoverFromRuntimeFailure(_ detail: String) {
         let changed = fallbackToItalianBuiltIn(reason: "native decode failed: \(detail)")
-        guard changed else { return }
-        DispatchQueue.main.async {
-            DeviceManager.shared.restartTranscriber()
+        if changed {
+            Bridge.log("STT recovery staged for next clean launch; live ORT restart intentionally suppressed")
         }
     }
 
