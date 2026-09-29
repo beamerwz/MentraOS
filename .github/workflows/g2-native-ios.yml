@@ -5,6 +5,8 @@ on:
     branches: [g2-native-labs]
     paths:
       - "g2-native/**"
+      - "mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/SherpaOnnx.swift"
+      - "mobile/modules/bluetooth-sdk/ios/Source/stt/SherpaOnnxSafeBridge.*"
       - ".github/workflows/g2-native-ios.yml"
   workflow_dispatch:
 
@@ -25,23 +27,41 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Setup ABI-matched ONNX Runtime
+      - name: Setup Nemotron-compatible Sherpa + ONNX Runtime
         run: |
           set -euo pipefail
-          ORT_VERSION="1.26.0"
+          SHERPA_VERSION="1.13.8"
+          ORT_VERSION="1.28.2"
           PKG="mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx"
-          DEST="$PKG/onnxruntime.xcframework"
-          if [ ! -d "$DEST" ]; then
-            mkdir -p /tmp/g2-ort
-            curl -fL --retry 3 \
-              "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v$ORT_VERSION/onnxruntime-ios-static-xcframework-$ORT_VERSION.zip" \
-              -o /tmp/g2-ort/ort.zip
-            unzip -q /tmp/g2-ort/ort.zip -d /tmp/g2-ort/unpacked
-            FOUND="$(find /tmp/g2-ort/unpacked -type d -name onnxruntime.xcframework | head -1)"
-            test -n "$FOUND"
-            mv "$FOUND" "$DEST"
-          fi
-          test -f "$DEST/ios-arm64/onnxruntime.framework/onnxruntime"
+          SHERPA_DEST="$PKG/sherpa-onnx.xcframework"
+          ORT_DEST="$PKG/onnxruntime.xcframework"
+          HEADER_DEST="$PKG/CurrentHeaders"
+
+          rm -rf "$SHERPA_DEST" "$ORT_DEST" "$HEADER_DEST"
+          mkdir -p /tmp/g2-sherpa /tmp/g2-ort "$HEADER_DEST"
+
+          curl -fL --retry 3             "https://github.com/k2-fsa/sherpa-onnx/releases/download/xcframework/sherpa-onnx-v$SHERPA_VERSION-ios-static.xcframework.zip"             -o /tmp/g2-sherpa/sherpa.zip
+          unzip -q /tmp/g2-sherpa/sherpa.zip -d /tmp/g2-sherpa/unpacked
+          SHERPA_FOUND="$(find /tmp/g2-sherpa/unpacked -type d -name '*.xcframework' | head -1)"
+          test -n "$SHERPA_FOUND"
+          mv "$SHERPA_FOUND" "$SHERPA_DEST"
+
+          curl -fL --retry 3             "https://github.com/csukuangfj/onnxruntime-libs/releases/download/v$ORT_VERSION/onnxruntime-ios-static-xcframework-$ORT_VERSION.xcframework.zip"             -o /tmp/g2-ort/ort.zip
+          unzip -q /tmp/g2-ort/ort.zip -d /tmp/g2-ort/unpacked
+          ORT_FOUND="$(find /tmp/g2-ort/unpacked -type d -name '*.xcframework' | head -1)"
+          test -n "$ORT_FOUND"
+          mv "$ORT_FOUND" "$ORT_DEST"
+
+          CAPI_HEADER="$(find "$SHERPA_DEST" -type f -path '*/sherpa-onnx/c-api/c-api.h' | head -1)"
+          test -n "$CAPI_HEADER"
+          CAPI_ROOT="${CAPI_HEADER%/sherpa-onnx/c-api/c-api.h}"
+          cp -R "$CAPI_ROOT/" "$HEADER_DEST/"
+
+          echo "Sherpa framework:"
+          find "$SHERPA_DEST" -maxdepth 4 -type f | head -30
+          echo "ORT framework:"
+          find "$ORT_DEST" -maxdepth 4 -type f | head -20
+          test -f "$HEADER_DEST/sherpa-onnx/c-api/c-api.h"
 
       - name: Generate standalone Xcode project
         working-directory: g2-native
@@ -51,17 +71,7 @@ jobs:
         working-directory: g2-native
         run: |
           set -euo pipefail
-          xcodebuild \
-            -project G2NativeLabs.xcodeproj \
-            -scheme G2NativeLabs \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            build | tee ../g2-native-xcodebuild.log
+          xcodebuild             -project G2NativeLabs.xcodeproj             -scheme G2NativeLabs             -configuration Release             -destination 'generic/platform=iOS'             -derivedDataPath build             CODE_SIGNING_ALLOWED=NO             CODE_SIGNING_REQUIRED=NO             CODE_SIGN_IDENTITY=""             DEVELOPMENT_TEAM=""             build | tee ../g2-native-xcodebuild.log
 
       - name: Package IPA
         working-directory: g2-native
