@@ -372,17 +372,33 @@ class SherpaOnnxRecognizer {
         }
     }
 
-    /// Executes the first encoder/decoder pass before a model can be persisted.
+    /// Executes at least one encoder/decoder pass before a model is accepted.
+    ///
+    /// Streaming models do not all become ready after the same amount of audio.
+    /// In particular, Nemotron ships 80/160/560/1120 ms chunk variants. Feed
+    /// 200 ms blocks (matching sherpa-onnx's streaming example) for up to 4 s
+    /// instead of assuming a fixed 500 ms is enough.
     func smokeTest(sampleRate: Int = 16000) throws {
-        try acceptWaveform(samples: [Float](repeating: 0, count: sampleRate / 2), sampleRate: sampleRate)
+        let chunkSamples = max(1, sampleRate / 5) // 200 ms
+        let maxChunks = 20                        // 4.0 s total
+        let silence = [Float](repeating: 0, count: chunkSamples)
+
         var decodeCount = 0
-        while try isReady() {
-            try decode()
-            decodeCount += 1
+        for _ in 0..<maxChunks {
+            try acceptWaveform(samples: silence, sampleRate: sampleRate)
+            while try isReady() {
+                try decode()
+                decodeCount += 1
+            }
+            if decodeCount > 0 { break }
         }
+
         if decodeCount == 0 {
-            throw SherpaOnnxRecognizerError.native("Smoke test did not reach the encoder")
+            throw SherpaOnnxRecognizerError.native(
+                "Smoke test did not reach the encoder after 4.0 s of staged audio"
+            )
         }
+
         try reset()
     }
 
