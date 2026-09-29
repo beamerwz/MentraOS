@@ -372,16 +372,26 @@ class SherpaOnnxRecognizer {
         }
     }
 
-    /// Executes the first encoder/decoder pass before a model can be persisted.
+    /// Executes at least one encoder/decoder pass before a model is accepted.
+    /// Feed staged audio because streaming models have different chunk requirements.
     func smokeTest(sampleRate: Int = 16000) throws {
-        try acceptWaveform(samples: [Float](repeating: 0, count: sampleRate / 2), sampleRate: sampleRate)
+        let chunkSamples = max(1, sampleRate / 5) // 200 ms
+        let silence = [Float](repeating: 0, count: chunkSamples)
         var decodeCount = 0
-        while try isReady() {
-            try decode()
-            decodeCount += 1
+
+        for _ in 0..<20 { // up to 4 seconds
+            try acceptWaveform(samples: silence, sampleRate: sampleRate)
+            while try isReady() {
+                try decode()
+                decodeCount += 1
+            }
+            if decodeCount > 0 { break }
         }
+
         if decodeCount == 0 {
-            throw SherpaOnnxRecognizerError.native("Smoke test did not reach the encoder")
+            throw SherpaOnnxRecognizerError.native(
+                "Smoke test did not reach the encoder after 4.0 s of staged audio"
+            )
         }
         try reset()
     }
