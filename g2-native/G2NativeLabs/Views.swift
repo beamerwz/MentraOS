@@ -245,9 +245,7 @@ struct ModelsView: View {
             }
             .navigationTitle("Models")
         }
-        .sheet(isPresented: $importing, onDismiss: {
-            g2.applicationDidBecomeActive()
-        }) {
+        .sheet(isPresented: $importing) {
             NativeModelDocumentPicker { result in
                 importing = false
                 switch result {
@@ -260,7 +258,7 @@ struct ModelsView: View {
             .ignoresSafeArea()
         }
         .onAppear {
-            g2.ensureRuntimeAlive(reason: "Models tab opened")
+            // Do not touch the BLE/audio session merely because the user opened Models.
         }
     }
 }
