@@ -3,8 +3,13 @@ import MentraBluetoothSDK
 
 struct G2PairCandidate: Identifiable, Equatable {
     let serial: String
-    let displayName: String
+    let leftName: String?
+    let rightName: String?
+
     var id: String { serial }
+
+    // The real Mentra SDK owns the L/R discovery and only exposes a G2 after
+    // its own discovery logic has identified a connectable device.
     var complete: Bool { true }
 }
 
@@ -23,9 +28,9 @@ enum G2PairingStage: Equatable {
         case .scanning: return "Looking for your G2"
         case .waitingForBoth: return "Preparing G2"
         case .connecting: return "Connecting"
-        case .authenticating: return "Authenticating G2"
+        case .authenticating: return "Starting Mentra session"
         case .ready: return "G2 ready"
-        case .failed: return "Pairing problem"
+        case .failed: return "Connection problem"
         }
     }
 
@@ -34,15 +39,15 @@ enum G2PairingStage: Equatable {
         case .bluetoothOff:
             return "Turn Bluetooth on to continue."
         case .scanning:
-            return "Mentra Bluetooth is scanning for your Even G2."
-        case .waitingForBoth(let id):
-            return "Mentra found \(id) and is preparing the pair."
-        case .connecting(let id):
-            return "Mentra Bluetooth is connecting \(id)…"
-        case .authenticating(let id):
-            return "Mentra is authenticating both lenses and restoring the EvenHub session for \(id)…"
-        case .ready(let id):
-            return "\(id) is connected through Mentra Bluetooth."
+            return "Using Mentra Bluetooth SDK to discover your G2."
+        case .waitingForBoth(let serial):
+            return "Mentra is preparing both lenses for \(serial)."
+        case .connecting(let serial):
+            return "Mentra is connecting \(serial)…"
+        case .authenticating(let serial):
+            return "Mentra is authenticating and starting the G2 runtime for \(serial)…"
+        case .ready(let serial):
+            return "\(serial) is connected through Mentra Bluetooth SDK."
         case .failed(let message):
             return message
         }
@@ -51,18 +56,22 @@ enum G2PairingStage: Equatable {
 
 @MainActor
 final class G2Transport: NSObject, ObservableObject {
-    @Published var bluetoothState = "Mentra SDK starting"
+    @Published var bluetoothState = "Starting"
     @Published var candidates: [G2PairCandidate] = []
     @Published var pairingStage: G2PairingStage = .scanning
+
     @Published var connectedName: String?
     @Published var connectedSerial: String?
+
     @Published var controlPackets = 0
     @Published var audioPackets = 0
     @Published var audioBytes = 0
     @Published var lastAudioAt: Date?
+
     @Published var pcmChunks = 0
     @Published var pcmBytes: Int64 = 0
     @Published var pcmRMS: Double = 0
+
     @Published var micArmed = false
     @Published var captionUpdates = 0
     @Published var lastError: String?
@@ -75,45 +84,69 @@ final class G2Transport: NSObject, ObservableObject {
         return false
     }
 
-    private let sdk: MentraBluetoothSDK
+    private let sdk = MentraBluetoothSDK()
     private var scanSession: ScanSession?
-    private var devicesByLabel: [String: Device] = [:]
-    private var selectedLabel: String?
-    private var runtimeStarted = false
-    private var modelWatchTask: Task<Void, Never>?
+    private var discovered: [String: Device] = [:]
+    private var selectedDeviceKey: String?
+
+    private var bootstrapTask: Task<Void, Never>?
+    private var captionTask: Task<Void, Never>?
+    private var lastCaption = ""
+    private var lastCaptionAt = Date.distantPast
 
     override init() {
-        let client = MentraBluetoothSDK()
-        sdk = client
         super.init()
 
-        client.delegate = self
+        sdk.delegate = self
 
         asr.onTranscript = { [weak self] text, final in
             guard let self else { return }
-            Task { @MainActor in
-                self.displayCaption(text, isFinal: final)
-            }
+            self.displayCaption(text, isFinal: final)
         }
 
-        Task { @MainActor [weak self] in
+        bootstrapTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 650_000_000)
-            self?.restoreOrScan()
+            self?.bootstrapMentra()
         }
     }
 
     deinit {
+        bootstrapTask?.cancel()
+        captionTask?.cancel()
         scanSession?.stop()
-        modelWatchTask?.cancel()
+        sdk.invalidate()
+    }
+
+    // MARK: - Actual Mentra Bluetooth SDK
+
+    private func bootstrapMentra() {
+        if sdk.glasses.connected {
+            adoptMentraState(sdk.glasses)
+            armMentraMic(reason: "existing Mentra session")
+            return
+        }
+
+        if sdk.defaultDevice != nil {
+            do {
+                pairingStage = .connecting(sdk.defaultDevice?.name ?? "G2")
+                bluetoothState = "On"
+                try sdk.connectDefault()
+                log("Mentra SDK connectDefault()")
+                return
+            } catch {
+                log("Mentra default reconnect deferred: \(error.localizedDescription)")
+            }
+        }
+
+        scan()
     }
 
     func scan() {
         scanSession?.stop()
         scanSession = nil
-        devicesByLabel.removeAll()
         candidates.removeAll()
-        lastError = nil
-        bluetoothState = "Mentra SDK scanning"
+        discovered.removeAll()
+
         pairingStage = .scanning
 
         do {
@@ -122,381 +155,428 @@ final class G2Transport: NSObject, ObservableObject {
                 timeout: 15,
                 onResults: { [weak self] devices in
                     guard let self else { return }
-                    self.consumeScanResults(devices)
+                    self.consumeMentraScan(devices)
                 },
                 onComplete: { [weak self] devices in
                     guard let self else { return }
-                    self.consumeScanResults(devices)
-                    if devices.isEmpty, !self.isReady {
-                        self.log("Mentra scan completed with no G2 result")
+                    self.consumeMentraScan(devices)
+                    if self.candidates.isEmpty && !self.isReady {
+                        self.log("Mentra scan completed with no G2 found")
                     }
                 }
             )
-            log("Mentra G2 scan started")
+            bluetoothState = "On"
+            log("Mentra SDK G2 scan started")
+        } catch let error as BluetoothSdkError {
+            handleSdkError(error)
+            scheduleBootstrapRetry()
         } catch {
-            let message = error.localizedDescription
-            lastError = message
-            if message.localizedCaseInsensitiveContains("bluetooth") {
-                bluetoothState = "Unavailable"
-                pairingStage = .bluetoothOff
-            } else {
-                pairingStage = .failed(message)
-            }
-            log("Mentra scan error: \(message)")
+            lastError = error.localizedDescription
+            pairingStage = .failed(error.localizedDescription)
+            log("Mentra scan error: \(error.localizedDescription)")
+            scheduleBootstrapRetry()
         }
     }
 
+    private func scheduleBootstrapRetry() {
+        bootstrapTask?.cancel()
+        bootstrapTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard let self, !self.isReady else { return }
+            self.bootstrapMentra()
+        }
+    }
+
+    private func consumeMentraScan(_ devices: [Device]) {
+        for device in devices where device.model == .g2 {
+            let key = device.name.isEmpty ? device.id : device.name
+            discovered[key] = device
+        }
+
+        candidates = discovered
+            .map { key, device in
+                G2PairCandidate(
+                    serial: key,
+                    leftName: device.name,
+                    rightName: device.name
+                )
+            }
+            .sorted { $0.serial < $1.serial }
+    }
+
     func pair(serial: String) {
-        guard let device = devicesByLabel[serial] else {
-            selectedLabel = serial
-            pairingStage = .waitingForBoth(serial)
-            scan()
+        guard let device = discovered[serial] else {
+            pairingStage = .failed("Mentra no longer has that G2 in the current scan.")
             return
         }
 
-        selectedLabel = serial
-        lastError = nil
+        selectedDeviceKey = serial
         scanSession?.stop()
         scanSession = nil
         pairingStage = .connecting(serial)
-        bluetoothState = "Mentra SDK connecting"
-        log("Mentra connect: \(device.name)")
+        lastError = nil
 
         do {
             try sdk.connect(
                 to: device,
                 options: ConnectOptions(
                     saveAsDefault: true,
-                    cancelExistingConnectionAttempt: true,
-                    requiresAncs: false
+                    cancelExistingConnectionAttempt: true
                 )
             )
+            log("Mentra SDK connecting to \(serial)")
+        } catch let error as BluetoothSdkError {
+            handleSdkError(error)
         } catch {
-            let message = error.localizedDescription
-            lastError = message
-            pairingStage = .failed(message)
-            log("Mentra connect error: \(message)")
+            lastError = error.localizedDescription
+            pairingStage = .failed(error.localizedDescription)
+            log("Mentra connect error: \(error.localizedDescription)")
         }
     }
 
     func forgetAndRescan() {
-        modelWatchTask?.cancel()
-        modelWatchTask = nil
+        scanSession?.stop()
+        scanSession = nil
+
         sdk.setMicState(
             enabled: false,
             useGlassesMic: true,
             sendTranscript: false,
             sendLc3Data: false
         )
+        sdk.disconnect()
         sdk.forget()
-        asr.unload()
+        sdk.clearDefaultDevice()
 
-        runtimeStarted = false
-        micArmed = false
+        discovered.removeAll()
+        candidates.removeAll()
+        selectedDeviceKey = nil
+
         connectedName = nil
         connectedSerial = nil
-        selectedLabel = nil
-        lastAudioAt = nil
+        micArmed = false
+
         audioPackets = 0
         audioBytes = 0
         pcmChunks = 0
         pcmBytes = 0
         pcmRMS = 0
+        lastAudioAt = nil
 
-        log("Mentra connection forgotten")
-        scan()
+        pairingStage = .scanning
+        log("Mentra SDK forgot G2")
+
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            self?.scan()
+        }
+    }
+
+    private func armMentraMic(reason: String) {
+        guard sdk.glasses.connected else {
+            micArmed = false
+            return
+        }
+
+        // This is the exact SDK path Mentra uses. DeviceManager/G2 now own
+        // EvenHub page lifecycle, mic restart, BLE pacing and reconnection.
+        sdk.setMicState(
+            enabled: true,
+            useGlassesMic: true,
+            sendTranscript: false,
+            sendLc3Data: false
+        )
+
+        micArmed = true
+        log("Mentra SDK mic enabled (\(reason))")
     }
 
     func ensureRuntimeAlive(reason: String) {
-        guard isReady else { return }
-
-        let staleAudio: Bool
-        if let lastAudioAt {
-            staleAudio = Date().timeIntervalSince(lastAudioAt) > 2.0
-        } else {
-            staleAudio = true
+        if sdk.glasses.connected {
+            adoptMentraState(sdk.glasses)
+            armMentraMic(reason: reason)
+            return
         }
 
-        log("Mentra runtime check: \(reason) • staleAudio=\(staleAudio)")
-
-        // Do not hand-roll an EvenHub OFF/ON edge here. Re-enabling through the
-        // Mentra SDK enters its G2 restartMic/rebuildPage recovery path, which
-        // owns page liveness, mic intent, heartbeats and both-lens recovery.
-        if !micArmed || staleAudio {
-            sdk.setMicState(
-                enabled: true,
-                useGlassesMic: true,
-                sendTranscript: false,
-                sendLc3Data: true
-            )
-            micArmed = true
-            log(staleAudio ? "Mentra requested G2 mic/session recovery" : "Mentra G2 mic enabled")
+        micArmed = false
+        do {
+            try sdk.connectDefault()
+            log("Mentra SDK reconnect requested (\(reason))")
+        } catch {
+            log("Mentra reconnect unavailable: \(error.localizedDescription)")
+            scheduleBootstrapRetry()
         }
     }
 
     func applicationDidBecomeActive() {
-        ensureRuntimeAlive(reason: "app returned active")
+        ensureRuntimeAlive(reason: "app became active")
     }
 
+    private func adoptMentraState(_ glasses: GlassesRuntimeState) {
+        guard glasses.connected else {
+            if !isReady {
+                connectedName = nil
+                connectedSerial = nil
+                micArmed = false
+            }
+            return
+        }
+
+        bluetoothState = "On"
+
+        let device = glasses.device
+        let serial =
+            device?.serialNumber
+            ?? selectedDeviceKey
+            ?? sdk.defaultDevice?.name
+            ?? "Even G2"
+
+        connectedSerial = serial
+        connectedName =
+            device?.bluetoothName
+            ?? sdk.defaultDevice?.name
+            ?? "Even G2"
+
+        if glasses.ready {
+            if !isReady {
+                log("Mentra SDK reports G2 fully booted")
+            }
+            pairingStage = .ready(serial)
+        } else {
+            pairingStage = .authenticating(serial)
+        }
+    }
+
+    // MARK: - Offline ASR stays ours
+
     func activateModel(_ model: ASRModel, directory: URL) {
-        ensureRuntimeAlive(reason: "before ASR model load")
         log("Loading ASR model: \(model.name) [\(model.family.rawValue)]")
 
+        // Bluetooth is deliberately untouched here. Mentra SDK owns the live
+        // glasses transport on its own lifecycle while ORT initializes.
         asr.load(
             modelName: model.name,
             directory: directory,
             family: model.family,
             language: "it-IT"
         )
-
-        modelWatchTask?.cancel()
-        modelWatchTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-
-            await self.writeGlassesText("Loading \(model.name)…")
-
-            var ticks = 0
-            while case .loading = self.asr.state, ticks < 240, !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 500_000_000)
-                ticks += 1
-            }
-            guard !Task.isCancelled else { return }
-
-            self.ensureRuntimeAlive(reason: "ASR model load finished")
-
-            if self.asr.state.isReady {
-                await self.writeGlassesText("Listening…")
-            } else if case .failed(let message) = self.asr.state {
-                await self.writeGlassesText("ASR error\n\(String(message.prefix(72)))")
-            }
-        }
-    }
-
-    private func restoreOrScan() {
-        if let device = sdk.defaultDevice, device.model == .g2 {
-            selectedLabel = label(for: device)
-            bluetoothState = "Mentra SDK reconnecting"
-            pairingStage = .connecting(selectedLabel ?? device.name)
-            log("Mentra default G2 found; attempting reconnect")
-            do {
-                try sdk.connectDefault(
-                    options: ConnectOptions(
-                        saveAsDefault: true,
-                        cancelExistingConnectionAttempt: true,
-                        requiresAncs: false
-                    )
-                )
-            } catch {
-                log("Mentra default reconnect deferred: \(error.localizedDescription)")
-                scan()
-            }
-        } else {
-            scan()
-        }
-    }
-
-    private func consumeScanResults(_ devices: [Device]) {
-        for device in devices where device.model == .g2 {
-            let key = label(for: device)
-            devicesByLabel[key] = device
-        }
-        candidates = devicesByLabel
-            .map { key, device in G2PairCandidate(serial: key, displayName: device.name) }
-            .sorted { $0.serial.localizedCaseInsensitiveCompare($1.serial) == .orderedAscending }
-    }
-
-    private func label(for device: Device) -> String {
-        let name = device.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? device.id : name
-    }
-
-    private func startRuntimeSession() {
-        guard !runtimeStarted else {
-            ensureRuntimeAlive(reason: "Mentra state refreshed")
-            return
-        }
-        runtimeStarted = true
-
-        sdk.setMicState(
-            enabled: true,
-            useGlassesMic: true,
-            sendTranscript: false,
-            sendLc3Data: true
-        )
-        micArmed = true
-        log("Mentra owns G2 mic + EvenHub lifecycle")
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.writeGlassesText(
-                self.asr.state.isReady
-                    ? "Listening…"
-                    : "G2 LABS\nImport + activate a model"
-            )
-        }
     }
 
     private func displayCaption(_ text: String, isFinal: Bool) {
-        guard !text.isEmpty, isReady else { return }
+        guard !text.isEmpty, sdk.glasses.connected else { return }
+
+        let now = Date()
+        if !isFinal,
+           text == lastCaption,
+           now.timeIntervalSince(lastCaptionAt) < 0.12 {
+            return
+        }
+
+        lastCaption = text
+        lastCaptionAt = now
         captionUpdates += 1
         log("\(isFinal ? "FINAL" : "PARTIAL"): \(text.prefix(90))")
 
-        Task { @MainActor [weak self] in
-            await self?.writeGlassesText(text)
+        captionTask?.cancel()
+        captionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.sdk.displayText(text)
+            } catch {
+                self.lastError = error.localizedDescription
+                self.log("Mentra displayText error: \(error.localizedDescription)")
+            }
         }
     }
 
-    private func writeGlassesText(_ text: String) async {
-        do {
-            try await sdk.displayText(text, x: 0, y: 0, size: 24)
-        } catch {
-            let message = error.localizedDescription
-            lastError = message
-            log("Mentra display error: \(message)")
-        }
-    }
-
-    private func handlePcm(_ pcm: Data) {
+    private func acceptMentraPcm(_ event: MicPcmEvent) {
+        let pcm = event.pcm
         guard !pcm.isEmpty else { return }
+
+        // With the SDK path, a delivered PCM event is our authoritative proof
+        // that the G2 mic session is alive.
+        audioPackets += 1
+        audioBytes += pcm.count
+        lastAudioAt = Date()
+
         pcmChunks += 1
         pcmBytes += Int64(pcm.count)
         pcmRMS = Self.rms(ofPCM16LE: pcm)
-        lastAudioAt = Date()
+
+        if !micArmed {
+            micArmed = true
+        }
+
         asr.acceptPCM(pcm)
     }
 
     private static func rms(ofPCM16LE data: Data) -> Double {
         let count = data.count / 2
         guard count > 0 else { return 0 }
+
         let meanSquare: Double = data.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return 0 }
             let samples = base.bindMemory(to: Int16.self, capacity: count)
             var sum = 0.0
-            for i in 0..<count {
-                let v = Double(Int16(littleEndian: samples[i])) / 32768.0
-                sum += v * v
+
+            for index in 0..<count {
+                let value = Double(Int16(littleEndian: samples[index])) / 32768.0
+                sum += value * value
             }
+
             return sum / Double(count)
         }
+
         return sqrt(meanSquare)
     }
 
+    private func handleSdkError(_ error: BluetoothSdkError) {
+        lastError = error.description
+        log("Mentra SDK error: \(error.description)")
+
+        switch error.code {
+        case "bluetooth_powered_off":
+            bluetoothState = "Off"
+            pairingStage = .bluetoothOff
+        case "bluetooth_unauthorized":
+            bluetoothState = "Unauthorized"
+            pairingStage = .failed(error.message)
+        case "bluetooth_not_ready":
+            bluetoothState = "Starting"
+        default:
+            pairingStage = .failed(error.message)
+        }
+    }
+
     private func log(_ text: String) {
-        events.insert("\(Date().formatted(date: .omitted, time: .standard))  \(text)", at: 0)
-        if events.count > 180 {
-            events.removeLast(events.count - 180)
+        events.insert(
+            "\(Date().formatted(date: .omitted, time: .standard))  \(text)",
+            at: 0
+        )
+        if events.count > 200 {
+            events.removeLast(events.count - 200)
         }
     }
 }
 
+// MARK: - MentraBluetoothSDKDelegate
+
 extension G2Transport: MentraBluetoothSDKDelegate {
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdate state: MentraBluetoothState) {
-        bluetoothState = state.glasses.connected ? "Mentra SDK connected" : "Mentra SDK ready"
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didUpdate state: MentraBluetoothState
+    ) {
+        adoptMentraState(state.glasses)
     }
 
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
-        if glasses.connected {
-            let device = glasses.device
-            let identifier =
-                device?.serialNumber
-                ?? selectedLabel
-                ?? device?.bluetoothName
-                ?? "Even G2"
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didUpdateGlasses glasses: GlassesRuntimeState
+    ) {
+        let wasReady = isReady
+        adoptMentraState(glasses)
 
-            connectedSerial = device?.serialNumber ?? selectedLabel
-            connectedName = device?.bluetoothName ?? "Even G2"
-            bluetoothState = "Mentra SDK connected"
-
-            if glasses.ready {
-                pairingStage = .ready(identifier)
-                startRuntimeSession()
-            } else {
-                pairingStage = .authenticating(identifier)
+        if glasses.connected && glasses.ready {
+            if !wasReady {
+                armMentraMic(reason: "Mentra G2 became ready")
             }
-        } else {
-            let prior = connectedSerial ?? selectedLabel
-            connectedName = nil
-            connectedSerial = nil
-            runtimeStarted = false
+        } else if !glasses.connected {
             micArmed = false
-            bluetoothState = "Mentra SDK reconnecting"
-
-            if let prior {
-                pairingStage = .connecting(prior)
-                log("Mentra reports G2 temporarily disconnected; SDK recovery remains active")
-            } else {
-                pairingStage = .scanning
+            if wasReady {
+                log("Mentra SDK reports G2 disconnected; waiting for SDK reconnect")
             }
         }
     }
 
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateSdkState sdkState: PhoneSdkRuntimeState) {
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didUpdateSdkState sdkState: PhoneSdkRuntimeState
+    ) {
         if sdkState.searching {
-            bluetoothState = "Mentra SDK scanning"
+            bluetoothState = "On"
+            if !isReady { pairingStage = .scanning }
         }
     }
 
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateScan scan: BluetoothScanState) {
-        consumeScanResults(scan.devices.filter { $0.model == .g2 })
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didUpdateScan scan: BluetoothScanState
+    ) {
+        consumeMentraScan(scan.devices)
     }
 
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: Device) {
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didDiscover device: Device
+    ) {
         guard device.model == .g2 else { return }
-        let key = label(for: device)
-        devicesByLabel[key] = device
-        consumeScanResults(Array(devicesByLabel.values))
+        consumeMentraScan(Array(discovered.values) + [device])
         log("Mentra discovered G2: \(device.name)")
     }
 
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didStopScan reason: ScanStopReason) {
-        log("Mentra scan stopped: \(reason)")
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didStopScan reason: ScanStopReason
+    ) {
+        if !isReady {
+            log("Mentra scan stopped: \(String(describing: reason))")
+        }
     }
 
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didReceive event: BluetoothEvent
+    ) {
         controlPackets += 1
-        if case .micHealth(let health) = event {
-            log("Mentra mic health: \(health.description)")
+
+        switch event {
+        case .micHealth(let health):
+            log("Mentra mic health: gaps=\(health.sequenceGapEvents) decodeFailures=\(health.decodeFailures)")
+        case .raw(let name, _):
+            if name == "pairing_info" || name == "entering_pairing_mode" || name == "owner_replaced" {
+                log("Mentra event: \(name)")
+            }
+        default:
+            break
         }
     }
 
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm event: MicPcmEvent) {
-        handlePcm(event.pcm)
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didReceiveMicPcm event: MicPcmEvent
+    ) {
+        acceptMentraPcm(event)
     }
 
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 event: MicLc3Event) {
-        guard !event.lc3.isEmpty else { return }
-        audioPackets += 1
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didReceiveMicLc3 event: MicLc3Event
+    ) {
+        // We deliberately request PCM from Mentra so its proven G2 LC3 decoder
+        // and microphone lifecycle remain the single audio path.
         audioBytes += event.lc3.count
-        lastAudioAt = Date()
     }
 
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didChangeDefaultDevice device: Device?) {
-        guard let device, device.model == .g2 else { return }
-        selectedLabel = label(for: device)
-    }
-
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didLog message: String) {
-        // Keep useful Mentra lifecycle messages while avoiding thousands of noisy
-        // audio/debug lines in the in-app diagnostics list.
-        let lower = message.lowercased()
-        if lower.contains("g2:")
-            || lower.contains("mic")
-            || lower.contains("pair")
-            || lower.contains("connect")
-            || lower.contains("recover")
-            || lower.contains("heartbeat")
-        {
-            log("MENTRA • \(message)")
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didChangeDefaultDevice device: Device?
+    ) {
+        if let device {
+            log("Mentra default G2: \(device.name)")
         }
     }
 
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didFail error: BluetoothSdkError) {
-        lastError = error.message
-        if error.code.localizedCaseInsensitiveContains("bluetooth") {
-            bluetoothState = "Unavailable"
-            pairingStage = .bluetoothOff
-        } else {
-            log("Mentra SDK error [\(error.code)]: \(error.message)")
-        }
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didLog message: String
+    ) {
+        log("Mentra: \(message)")
+    }
+
+    func mentraBluetoothSDK(
+        _ sdk: MentraBluetoothSDK,
+        didFail error: BluetoothSdkError
+    ) {
+        handleSdkError(error)
     }
 }
