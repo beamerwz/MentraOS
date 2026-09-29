@@ -25,7 +25,11 @@ Pod::Spec.new do |s|
   s.dependency 'ExpoModulesCore' if include_expo_adapter
   s.dependency 'SWCompression', '~> 4.8.0'
   s.dependency 'SwiftProtobuf', '~> 1.0'
-  s.dependency 'onnxruntime-objc', '1.18.0'
+  # Do NOT link a second ONNX Runtime into the app. The vendored Sherpa iOS
+  # archive already carries the ORT implementation it was built against.
+  # Mixing CocoaPods onnxruntime-objc 1.18.0 with Sherpa's bundled ORT leaves
+  # Ort::detail::Global::Api pointing at the wrong ABI and crashes at
+  # SessionOptions::SetIntraOpNumThreads (EXC_BAD_ACCESS 0xC0).
   s.dependency 'UltraliteSDK'
 
   # Swift/Objective-C compatibility
