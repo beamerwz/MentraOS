@@ -172,6 +172,10 @@ class STTModelManager {
   async getCurrentLanguageFromPreferences(): Promise<string> {
     try {
       const path = await BluetoothSdk.getSttModelPath()
+      if (path && path.includes("/stt_models/custom")) {
+        this.currentLanguage = "custom"
+        return "custom"
+      }
       const code = path && path.length > 0 ? this.getLanguageFromPath(path) : ""
       if (code && this.languages[code]) {
         this.currentLanguage = code
@@ -223,6 +227,27 @@ class STTModelManager {
   async isModelAvailable(code?: string): Promise<boolean> {
     try {
       const id = code || this.currentLanguage
+
+      if (id === "custom") {
+        const persistedPath = await BluetoothSdk.getSttModelPath()
+        if (
+          persistedPath &&
+          persistedPath.includes("/stt_models/custom") &&
+          (await BluetoothSdk.validateSttModel(persistedPath))
+        ) {
+          return true
+        }
+
+        const customBase = `${this.getModelDirectory()}/custom`
+        if (await BluetoothSdk.validateSttModel(customBase)) return true
+        if (await RNFS.exists(customBase)) {
+          const entries = await RNFS.readDir(customBase)
+          const dirs = entries.filter((entry) => entry.isDirectory())
+          if (dirs.length === 1 && (await BluetoothSdk.validateSttModel(dirs[0].path))) return true
+        }
+        return false
+      }
+
       const language = this.languages[id]
       if (!language) return false
 
