@@ -16,9 +16,15 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.beamerwz.g2nativelabs
         PRODUCT_NAME: G2 LABS Native
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
         INFOPLIST_KEY_CFBundleDisplayName: G2 LABS Native
-        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: G2 LABS uses Bluetooth to connect directly to your G2 glasses.
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: G2 LABS uses Bluetooth to pair directly with both sides of your G2 glasses.
         INFOPLIST_KEY_NSMicrophoneUsageDescription: G2 LABS can use microphone audio for local speech recognition diagnostics.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UIRequiresFullScreen: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
     scheme:
