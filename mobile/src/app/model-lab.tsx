@@ -34,7 +34,7 @@ export default function G2ModelLab() {
 
   const importCustom=async()=>{
     try{
-      const picked=await DocumentPicker.getDocumentAsync({type:"application/x-bzip2",copyToCacheDirectory:true})
+      const picked=await DocumentPicker.getDocumentAsync({type:"*/*",copyToCacheDirectory:true})
       if(picked.canceled) return
       const asset=picked.assets[0]
       setBusy("custom"); setStatus("Importing + validating custom model…")
