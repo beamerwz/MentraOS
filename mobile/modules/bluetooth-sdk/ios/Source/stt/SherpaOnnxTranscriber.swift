@@ -210,8 +210,13 @@ class SherpaOnnxTranscriber {
                 throw NSError(domain: "SherpaOnnxTranscriber", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to create recognizer"])
             }
 
-            // Nemotron 3.5 multilingual selects language per stream. Applying this
-            // to transducer streams is harmless for models that do not consume it.
+            // Nemotron 3.5 multilingual requires a prompt_index on every stream.
+            // 101 selects automatic language prompting; keep the explicit language hint too.
+            // These options must be present before the first AcceptWaveform/decode.
+            if modelType == "transducer" {
+                try recognizer?.setOption(key: "prompt_index", value: "101")
+                Bridge.log("Sherpa stream prompt_index option: 101")
+            }
             if let languageCode = STTTools.languageForRecognizer(), !languageCode.isEmpty {
                 try recognizer?.setOption(key: "language", value: languageCode)
                 Bridge.log("Sherpa stream language option: \(languageCode)")
@@ -222,6 +227,10 @@ class SherpaOnnxTranscriber {
             // before this recognizer is considered usable.
             try recognizer?.smokeTest(sampleRate: Self.SAMPLE_RATE)
             try recognizer?.recreateStream()
+            // recreateStream() replaces the native stream, so reapply every per-stream option.
+            if modelType == "transducer" {
+                try recognizer?.setOption(key: "prompt_index", value: "101")
+            }
             if let languageCode = STTTools.languageForRecognizer(), !languageCode.isEmpty {
                 try recognizer?.setOption(key: "language", value: languageCode)
             }
