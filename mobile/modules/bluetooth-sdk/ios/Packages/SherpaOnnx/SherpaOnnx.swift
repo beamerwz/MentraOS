@@ -2039,10 +2039,14 @@ func sherpaOnnxOfflineSpeechDenoiserGtcrnModelConfig(model: String = "")
     return SherpaOnnxOfflineSpeechDenoiserGtcrnModelConfig(model: toCPointer(model))
 }
 
-func sherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig(model: String = "")
-    -> SherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig
-{
-    return SherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig(model: toCPointer(model))
+func sherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig(
+    model: String = "",
+    attenuationLimitDb: Float = 0
+) -> SherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig {
+    return SherpaOnnxOfflineSpeechDenoiserDpdfNetModelConfig(
+        model: toCPointer(model),
+        attenuation_limit_db: attenuationLimitDb
+    )
 }
 
 func sherpaOnnxOfflineSpeechDenoiserModelConfig(
