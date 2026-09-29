@@ -25,10 +25,10 @@ targets:
     type: application
     platform: iOS
     sources:
-      - Sources
-      - Vendor
-    resources:
-      - Resources
+      - path: Sources
+      - path: Vendor
+      - path: Resources
+        buildPhase: resources
     dependencies:
       - framework: Frameworks/sherpa-onnx.xcframework
         embed: false
