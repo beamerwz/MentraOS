@@ -366,8 +366,13 @@ struct ViewState {
         if let transcriber = transcriber {
             if transcriber.initialize() {
                 Bridge.log("SherpaOnnxTranscriber fully initialized")
-            } else if STTTools.fallbackToItalianBuiltIn(reason: "startup recognizer smoke test failed") {
-                _ = transcriber.initialize()
+            } else {
+                // Do not construct a second ORT recognizer in the same process.
+                // If the selected model fails, stage the known-good fallback and
+                // use it on the next clean launch.
+                if STTTools.fallbackToItalianBuiltIn(reason: "startup recognizer smoke test failed") {
+                    Bridge.log("Sherpa fallback staged for next clean launch")
+                }
             }
         }
         #endif
@@ -1001,8 +1006,9 @@ struct ViewState {
 
     func restartTranscriber() {
         #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-        Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
-        transcriber?.restart()
+        // iOS ORT/Sherpa must remain single-lifetime inside this process.
+        // Model changes are persisted and become active on the next clean launch.
+        Bridge.log("MAN: restartTranscriber suppressed; clean launch required for STT model changes")
         #else
         Bridge.log("MAN: Local STT is not included in this SwiftPM build")
         #endif
