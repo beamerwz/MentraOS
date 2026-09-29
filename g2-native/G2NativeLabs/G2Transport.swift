@@ -365,6 +365,70 @@ final class G2Transport: NSObject, ObservableObject {
         }
     }
 
+    func ensureRuntimeAlive(reason: String) {
+        guard isReady else { return }
+        let staleAudio: Bool
+        if let lastAudioAt {
+            staleAudio = Date().timeIntervalSince(lastAudioAt) > 1.5
+        } else {
+            staleAudio = true
+        }
+
+        log("Runtime keepalive: \(reason) • staleAudio=\(staleAudio)")
+
+        Task { @MainActor in
+            await send(
+                service: G2NativeProtocol.deviceSettingsService,
+                payload: G2NativeProtocol.baseHeartbeat(magic: codec.nextMagic()),
+                toLeft: true,
+                toRight: true
+            )
+            await send(
+                service: G2NativeProtocol.evenHubService,
+                payload: G2NativeProtocol.evenHubHeartbeat(magic: codec.nextMagic()),
+                reserve: true,
+                toLeft: false,
+                toRight: true
+            )
+
+            if staleAudio || !micArmed {
+                await send(
+                    service: G2NativeProtocol.evenHubService,
+                    payload: G2NativeProtocol.audioControl(enabled: false, magic: codec.nextMagic()),
+                    reserve: true,
+                    toLeft: false,
+                    toRight: true
+                )
+                try? await Task.sleep(nanoseconds: 180_000_000)
+                await send(
+                    service: G2NativeProtocol.evenHubService,
+                    payload: G2NativeProtocol.audioControl(enabled: true, magic: codec.nextMagic()),
+                    reserve: true,
+                    toLeft: false,
+                    toRight: true
+                )
+                micArmed = true
+                log("Runtime recovered: G2 mic OFF→ON re-armed")
+            }
+
+            let statusText: String
+            if !asr.partialText.isEmpty {
+                statusText = asr.partialText
+            } else if !asr.finalText.isEmpty {
+                statusText = asr.finalText
+            } else if asr.state.isReady {
+                statusText = "Listening…"
+            } else {
+                statusText = "G2 LABS\nImport + activate a model"
+            }
+            await updateCaptionOnGlasses(statusText)
+        }
+    }
+
+    func applicationDidBecomeActive() {
+        ensureRuntimeAlive(reason: "app returned active")
+    }
+
     func activateModel(_ model: ASRModel, directory: URL) {
         log("Loading ASR model: \(model.name) [\(model.family.rawValue)]")
         asr.load(modelName: model.name, directory: directory, family: model.family, language: "it")
