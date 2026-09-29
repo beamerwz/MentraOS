@@ -255,7 +255,7 @@ final class G2Transport: NSObject, ObservableObject {
     private func nextSync() -> UInt8 { defer { syncID &+= 1 }; return syncID }
     private func nextMagic() -> Int32 { defer { magic &+= 1 }; return Int32(magic) }
 
-    private func serial(from manufacturer: Data) -> String? {
+    nonisolated private func serial(from manufacturer: Data) -> String? {
         guard manufacturer.count >= 16 else { return nil }
         return String(data: manufacturer.subdata(in: 2..<16), encoding: .ascii)?
             .replacingOccurrences(of: "[\\x00-\\x1F\\x7F]", with: "", options: .regularExpression)
