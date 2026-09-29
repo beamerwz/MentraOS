@@ -117,14 +117,12 @@ class LocalSttFallbackCoordinator {
       this.log("local stt activation skipped: routing changed before start completed")
       return
     }
-    try {
-      // Direct btsdk call now (was a host restartTranscriber hook).
-      await BluetoothSdk.restartTranscriber()
-    } catch (err) {
-      this.log(`restartTranscriber failed: ${err}`)
-    }
+    // The native recognizer is created once during a clean app launch.
+    // Never tear down/recreate ONNX Runtime when Captions starts: on iOS that
+    // path can invalidate ORT global state and crash the whole G2 session.
+    // Starting local STT only arms PCM delivery into the already-loaded stream.
     if (!this.shouldUseLocalStt()) {
-      this.log("local stt activation skipped: routing changed during transcriber restart")
+      this.log("local stt activation skipped: routing changed before PCM arm")
       return
     }
     try {
