@@ -3,6 +3,12 @@ options:
   bundleIdPrefix: com.beamerwz
   deploymentTarget:
     iOS: "17.0"
+
+packages:
+  MentraBluetoothSDK:
+    url: https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
+    branch: main
+
 settings:
   base:
     SWIFT_VERSION: 5.9
@@ -13,14 +19,11 @@ targets:
     platform: iOS
     sources:
       - path: G2NativeLabs
-      - path: ../mobile/modules/bluetooth-sdk/ios/Packages/CoreObjC
-        excludes:
-          - CoreObjC.xcodeproj
-          - include
       - path: ../mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/SherpaOnnx.swift
       - path: ../mobile/modules/bluetooth-sdk/ios/Source/stt/SherpaOnnxSafeBridge.h
       - path: ../mobile/modules/bluetooth-sdk/ios/Source/stt/SherpaOnnxSafeBridge.mm
     dependencies:
+      - package: MentraBluetoothSDK
       - framework: ../mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/sherpa-onnx.xcframework
         embed: false
       - framework: ../mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/onnxruntime.xcframework
@@ -33,8 +36,7 @@ targets:
         SUPPORTS_MACCATALYST: NO
         SWIFT_OBJC_BRIDGING_HEADER: G2NativeLabs/G2NativeLabs-Bridging-Header.h
         HEADER_SEARCH_PATHS:
-          - "$(SRCROOT)/../mobile/modules/bluetooth-sdk/ios/Packages/CoreObjC"
-          - "$(SRCROOT)/../mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/sherpa-onnx.xcframework/ios-arm64/Headers"
+          - "$(SRCROOT)/../mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/CurrentHeaders"
           - "$(SRCROOT)/../mobile/modules/bluetooth-sdk/ios/Source"
         CLANG_CXX_LANGUAGE_STANDARD: c++17
         CLANG_CXX_LIBRARY: libc++
@@ -43,8 +45,9 @@ targets:
           - "$(inherited)"
           - "-lc++"
           - "-lbz2"
+          - "-framework CoreML"
         INFOPLIST_KEY_CFBundleDisplayName: G2 LABS Native
-        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: G2 LABS uses Bluetooth to pair directly with both sides of your G2 glasses.
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: G2 LABS uses Mentra Bluetooth to pair and maintain your Even G2 glasses.
         INFOPLIST_KEY_NSMicrophoneUsageDescription: G2 LABS processes G2 microphone audio locally for offline speech recognition.
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
