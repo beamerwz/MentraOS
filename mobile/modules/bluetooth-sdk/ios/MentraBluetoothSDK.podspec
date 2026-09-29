@@ -41,6 +41,12 @@ Pod::Spec.new do |s|
     'HEADER_SEARCH_PATHS' => '$(inherited) "$(PODS_TARGET_SRCROOT)/Packages/SherpaOnnx/CurrentHeaders" "$(PODS_TARGET_SRCROOT)/Packages/SherpaOnnx/sherpa-onnx.xcframework/ios-arm64/Headers"'
   }
 
+  # The public exception-safe Sherpa bridge includes sherpa-onnx/c-api/c-api.h.
+  # Propagate that header root to apps consuming the static Mentra framework.
+  s.user_target_xcconfig = {
+    'HEADER_SEARCH_PATHS' => '$(inherited) "$(PODS_ROOT)/../../mobile/modules/bluetooth-sdk/ios/Packages/SherpaOnnx/CurrentHeaders"'
+  }
+
   # iOS frameworks required by Bluetooth SDK
   ios_frameworks = ['AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics']
   ios_frameworks << 'Network' if include_expo_adapter
