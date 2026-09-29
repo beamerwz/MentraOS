@@ -1,6 +1,14 @@
 #pragma once
 
+#if __has_include("sherpa-onnx/c-api/c-api.h")
 #include "sherpa-onnx/c-api/c-api.h"
+#elif __has_include("c-api/c-api.h")
+#include "c-api/c-api.h"
+#elif __has_include("c-api.h")
+#include "c-api.h"
+#else
+#error "sherpa-onnx c-api.h not found"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
