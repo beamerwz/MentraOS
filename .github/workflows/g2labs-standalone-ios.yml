@@ -61,6 +61,21 @@ jobs:
             DEVELOPMENT_TEAM="" \
             build | tee g2labs-standalone-xcodebuild.log
 
+      - name: Verify bundled offline baseline
+        working-directory: standalone/G2LabsStandalone
+        run: |
+          set -euo pipefail
+          APP="$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -type d | head -1)"
+          test -n "$APP"
+          BASE="$APP/BuiltinItalian"
+          test -s "$BASE/encoder.int8.onnx"
+          test -s "$BASE/decoder.int8.onnx"
+          test -s "$BASE/joiner.int8.onnx"
+          test -s "$BASE/tokens.txt"
+          echo "Bundled Italian baseline:"
+          du -sh "$BASE"
+          ls -lh "$BASE"
+
       - name: Package unsigned IPA
         working-directory: standalone/G2LabsStandalone
         run: |
