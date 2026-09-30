@@ -126,9 +126,6 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         // MARK: - Display Commands
 
         AsyncFunction("displayEvent") { (params: [String: Any]) in
-            let displayNs = DispatchTime.now().uptimeNanoseconds
-            G2LabDiagnostics.markDisplay(ns: displayNs)
-            Bridge.log("G2LAB_TRACE T7_NATIVE_DISPLAY ns=\(displayNs)")
             let sdk = await MainActor.run { self.bluetoothSdk() }
             try? await sdk.displayEvent(DisplayEventRequest(values: params))
         }
