@@ -73,6 +73,25 @@ jobs:
           # dependencies such as React Native Skia install their prebuilts.
           bun install --no-frozen-lockfile
 
+      - name: Restore React Native Skia prebuilt binaries
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          SKIA_INSTALL="node_modules/@shopify/react-native-skia/scripts/install-skia.mjs"
+          test -f "$SKIA_INSTALL" || { echo "::error::Skia install script not found"; exit 1; }
+          for attempt in 1 2 3; do
+            if node "$SKIA_INSTALL"; then
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              echo "::error::Skia binary download failed after 3 attempts"
+              exit 1
+            fi
+            echo "Skia download attempt $attempt failed; retrying..."
+            sleep $((attempt * 5))
+          done
+          find node_modules/@shopify/react-native-skia -maxdepth 4 \( -name '*.xcframework' -o -name 'libs' \) -print | head -30
+
       - name: Configure development environment
         working-directory: mobile
         run: |
