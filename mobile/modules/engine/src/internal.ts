@@ -73,6 +73,11 @@ export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbac
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
 export {default as audioPlaybackService} from "./services/AudioPlaybackService"
 export {default as sttModelManager, STTModelManager} from "./services/STTModelManager"
+export type {
+  RemoteCatalogModel,
+  ModelSourceLink,
+  ModelCompatibility,
+} from "./services/STTModelManager"
 export {default as ttsModelManager, TTSModelManager} from "./services/TTSModelManager"
 export {default as offlineSpeechModelService} from "./services/OfflineSpeechModelService"
 
