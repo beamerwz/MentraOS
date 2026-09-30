@@ -660,9 +660,14 @@ export class CaptionsController {
     }
 
     // 4. Render on glasses.
-    const g2LabsRenderAt = performance.now()
+    // The local miniapp background runs in a stripped JSContext where the
+    // browser Performance API is not guaranteed to exist. Using performance.now()
+    // here used to throw *after* the transcript was sent to the phone UI but
+    // *before* processAndDisplay(), which exactly produced "captions on phone,
+    // nothing on glasses". Date.now() is available in every host runtime.
+    const g2LabsRenderAt = Date.now()
     console.log(
-      `G2LAB_TRACE T6_CAPTIONS_RENDER perfMs=${g2LabsRenderAt.toFixed(3)} final=${data.isFinal} chars=${displayText.length}`,
+      `G2LAB_TRACE T6_CAPTIONS_RENDER epochMs=${g2LabsRenderAt} final=${data.isFinal} chars=${displayText.length}`,
     )
     this.processAndDisplay(displayText, data.isFinal, speakerId)
   }
@@ -876,11 +881,20 @@ export class CaptionsController {
       maxTextLines,
       lineHeightPx: this.currentProfile.lineHeightPx,
     })
-    const g2LabsDisplayAt = performance.now()
+    const g2LabsDisplayAt = Date.now()
     console.log(
-      `G2LAB_TRACE T7_DISPLAY_RENDER perfMs=${g2LabsDisplayAt.toFixed(3)} chars=${text.length}`,
+      `G2LAB_TRACE T7_DISPLAY_RENDER epochMs=${g2LabsDisplayAt} chars=${text.length}`,
     )
-    void this.session.display.render([{type: "text", id: "caption", box, text}])
+    void this.session.display
+      .render([{type: "text", id: "caption", box, text}])
+      .then((result) => {
+        console.log(
+          `G2LAB_TRACE T8_DISPLAY_RESULT status=${result.status} degraded=${result.degraded === true} reason=${result.reason ?? ""}`,
+        )
+      })
+      .catch((error) => {
+        console.error("G2LAB_TRACE T8_DISPLAY_RESULT rejected", error)
+      })
   }
 
   private cleanTranscriptText(text: string): string {
