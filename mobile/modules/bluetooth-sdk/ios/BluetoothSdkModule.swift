@@ -268,6 +268,10 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             G2LabDiagnostics.resetPipeline()
         }
 
+        Function("markG2LabDisplay") {
+            G2LabDiagnostics.markDisplay(ns: DispatchTime.now().uptimeNanoseconds)
+        }
+
         Function("jscSpawn") { (count: Int) -> Int in
             JSCExperiment.spawn(count: count)
         }
