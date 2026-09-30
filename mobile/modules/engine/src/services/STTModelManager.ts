@@ -131,11 +131,6 @@ class STTModelManager {
       detail: "iPhone-capable GGML/GGUF Whisper ecosystem; requires a whisper.cpp adapter.",
     },
     {
-      name: "faster-whisper / CTranslate2",
-      url: "https://github.com/SYSTRAN/faster-whisper",
-      detail: "Fast Whisper ecosystem; useful discovery source even though native iOS needs a separate adapter.",
-    },
-    {
       name: "FunASR model zoo",
       url: "https://github.com/modelscope/FunASR/blob/main/model_zoo/modelscope_models.md",
       detail: "Streaming and offline ASR families including Paraformer / multilingual models.",
