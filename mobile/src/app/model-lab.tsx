@@ -8,6 +8,9 @@ import {Screen} from "@/components/ignite"
 import {sttModelManager as STT} from "@mentra/engine-host-internal"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 
+// The unsigned G2 IPA workflow is mobile/**-triggered but rebuilds the Captions
+// miniapp from branch HEAD, so keep this host-side lab tied to that bundle path.
+
 type NativeDiagnostics = {
   modelState?: string
   modelPath?: string
