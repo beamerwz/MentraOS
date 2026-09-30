@@ -2,7 +2,7 @@ import {useFocusEffect} from "@react-navigation/native"
 import {router} from "expo-router"
 import {LinearGradient} from "expo-linear-gradient"
 import * as Application from "expo-application"
-import {useCallback, useEffect, useRef, useState} from "react"
+import {useCallback, useEffect, useRef, useState, type ReactNode} from "react"
 import {ActivityIndicator, Pressable, ScrollView, Text as RNText, View} from "react-native"
 import {
   Activity,
@@ -32,7 +32,7 @@ const CAPTIONS_PACKAGE = "com.mentra.captions"
 type QuickCardProps = {
   title: string
   subtitle: string
-  icon: React.ReactNode
+  icon: ReactNode
   onPress: () => void
   accent?: boolean
   wide?: boolean

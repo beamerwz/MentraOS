@@ -103,7 +103,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     version: process.env.MENTRAOS_NATIVE_MARKETING_VERSION || familyBaseVersion,
     scheme: isG2AccessBuild ? "g2labs" : "com.mentra",
     orientation: "portrait",
-    userInterfaceStyle: "automatic",
+    userInterfaceStyle: isG2AccessBuild ? "dark" : "automatic",
     icon: variant.icon,
     updates: {
       fallbackToCacheTimeout: 0,
@@ -288,17 +288,23 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ],
       [
         "expo-splash-screen",
-        {
-          image: "./assets/logo/logo_light.png",
-          resizeMode: "cover",
-          imageWidth: 100,
-          backgroundColor: "#fff",
-          dark: {
-            // backgroundColor: "#fff",
-            backgroundColor: "#171717",
-            image: "./assets/logo/logo_dark.png",
-          },
-        },
+        isG2AccessBuild
+          ? {
+              backgroundColor: "#050208",
+              dark: {
+                backgroundColor: "#050208",
+              },
+            }
+          : {
+              image: "./assets/logo/logo_light.png",
+              resizeMode: "cover",
+              imageWidth: 100,
+              backgroundColor: "#fff",
+              dark: {
+                backgroundColor: "#171717",
+                image: "./assets/logo/logo_dark.png",
+              },
+            },
       ],
       "expo-router",
       [

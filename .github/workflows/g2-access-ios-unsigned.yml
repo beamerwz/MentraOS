@@ -8,6 +8,7 @@ on:
       - g2-labs-phase1
       - g2-labs-next-background-captions
       - g2-labs-latency-lab
+      - g2-labs-ui-3.1.2-dark-purple
     paths:
       - "mobile/**"
       - ".github/workflows/g2-access-ios-unsigned.yml"
@@ -33,6 +34,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Read G2 LABS version
+        id: g2_version
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
 
       - name: Free space not needed by iOS build
         run: |
@@ -197,15 +202,17 @@ jobs:
           mkdir Payload
           cp -R "$APP" Payload/
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "Payload/$(basename "$APP")/Info.plist"
-          zip -qry G2_LABS_Phase1_unsigned.ipa Payload
+          VERSION="${{ steps.g2_version.outputs.version }}"
+          IPA="G2_LABS_v${VERSION}_unsigned.ipa"
+          zip -qry "$IPA" Payload
           rm -rf Payload
-          ls -lh G2_LABS_Phase1_unsigned.ipa
+          ls -lh "$IPA"
 
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: G2_LABS_Phase1_unsigned_IPA
-          path: mobile/G2_LABS_Phase1_unsigned.ipa
+          name: G2_LABS_v${{ steps.g2_version.outputs.version }}_unsigned_IPA
+          path: mobile/G2_LABS_v*_unsigned.ipa
           if-no-files-found: error
           retention-days: 14
 

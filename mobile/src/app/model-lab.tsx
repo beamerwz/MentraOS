@@ -1,5 +1,6 @@
 import {useEffect, useMemo, useState} from "react"
 import {ActivityIndicator, Linking, Pressable, ScrollView, Text as RNText, TextInput, View} from "react-native"
+import * as Application from "expo-application"
 import * as DocumentPicker from "expo-document-picker"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {router} from "expo-router"
@@ -162,6 +163,7 @@ export default function G2ModelLab() {
   )
 
   const runtimeState = modelStateLabel(diagnostics.modelState)
+  const appVersion = Application.nativeApplicationVersion || "3.1.2"
 
   const activate = async (code: string) => {
     try {
@@ -336,7 +338,7 @@ export default function G2ModelLab() {
           G2 MODEL LAB
         </RNText>
         <RNText style={{color: "#9b8cae", fontSize: 15, marginTop: 6, marginBottom: 24}}>
-          Offline speech-engine lab · Italian
+          Offline speech-engine lab · Italian · v{appVersion}
         </RNText>
 
         <Card code="it" title="Italian Built-in" sub="Known-good Kroko INT8 · recovery baseline" />
