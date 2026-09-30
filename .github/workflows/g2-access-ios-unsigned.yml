@@ -43,13 +43,16 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install JavaScript dependencies
+        working-directory: mobile
+        run: bun install --no-frozen-lockfile
+
       - name: Build G2 LABS offline Captions bundle
         env:
           HUSKY: "0"
           MENTRA_PUBLIC_G2_LABS: "1"
         run: |
           set -euo pipefail
-          bun install --no-frozen-lockfile
           bun run build:miniapp
           (
             cd miniapps/captions
@@ -61,10 +64,6 @@ jobs:
           cp "$CAPTIONS_ZIP" mobile/assets/miniapps/com.mentra.captions-1.0.17.zip
           bun mobile/scripts/generate-bundled-miniapps.mjs
           ls -lh mobile/assets/miniapps/com.mentra.captions-1.0.17.zip
-
-      - name: Install JavaScript dependencies
-        working-directory: mobile
-        run: bun install --no-frozen-lockfile
 
       - name: Configure development environment
         working-directory: mobile
