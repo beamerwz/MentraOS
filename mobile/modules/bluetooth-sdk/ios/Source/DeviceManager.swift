@@ -312,6 +312,12 @@ struct ViewState {
     private var lastPcmProducedAt: Int64?
     private var lastLc3Sequence: Int?
     private var lastBackgroundGlassesKeepaliveNs: UInt64 = 0
+    // iOS grants continuous background execution to an active audio-recording
+    // session, but not to arbitrary CPU work woken only by CoreBluetooth.
+    // When G2 is the selected microphone, this engine records/discards the
+    // iPhone mic solely to keep the local Sherpa worker scheduled. G2 LC3
+    // remains the ONLY PCM fed to STT.
+    private var g2BackgroundExecutionEngine: AVAudioEngine?
     private var micReinitTimer: Timer?
 
     /// STT:
@@ -383,6 +389,19 @@ struct ViewState {
         lc3Converter = PcmConverter()
         Bridge.log("LC3 converter initialized for unified audio encoding")
 
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleG2LabsWillResignActive),
+            name: UIApplication.willResignActiveNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleG2LabsDidBecomeActive),
+            name: UIApplication.didBecomeActiveNotification,
+            object: nil
+        )
+
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.micReinitTimer = Timer.scheduledTimer(
@@ -391,6 +410,88 @@ struct ViewState {
                 self?.checkAndReinitGlassesMic()
             }
         }
+    }
+
+    // MARK: - G2 LABS background STT execution
+
+    @objc private func handleG2LabsWillResignActive() {
+        startG2BackgroundExecutionKeepaliveIfNeeded()
+    }
+
+    @objc private func handleG2LabsDidBecomeActive() {
+        stopG2BackgroundExecutionKeepalive()
+    }
+
+    private func startG2BackgroundExecutionKeepaliveIfNeeded() {
+        guard g2BackgroundExecutionEngine == nil else { return }
+        guard currentMic == MicTypes.GLASSES_CUSTOM else { return }
+        guard micEnabled && (shouldSendTranscript || localSttFallbackActive) else { return }
+
+        // Phone-mic captions already have a live AVAudioEngine, which is why they
+        // remain smooth in the background. Do not create a second input engine.
+        if PhoneMic.shared.isRecording {
+            return
+        }
+
+        let session = AVAudioSession.sharedInstance()
+        guard session.recordPermission == .granted else {
+            Bridge.log("G2LAB_BG: phone mic permission missing; cannot hold continuous STT execution")
+            return
+        }
+
+        do {
+            // No phone-mic samples enter STT. This is only an iOS background
+            // execution assertion backed by a real recording session.
+            try session.setCategory(.record, mode: .measurement, options: [.mixWithOthers])
+            if let builtInMic = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                try? session.setPreferredInput(builtInMic)
+            }
+            try session.setActive(true, options: .notifyOthersOnDeactivation)
+
+            let engine = AVAudioEngine()
+            let input = engine.inputNode
+            guard input.engine != nil, input.numberOfInputs > 0 else {
+                throw NSError(
+                    domain: "G2LabsBackgroundAudio",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "No valid iPhone input node"]
+                )
+            }
+
+            // A large discard buffer minimizes CPU overhead. The tap intentionally
+            // does nothing: G2 LC3 is still the sole transcription source.
+            input.removeTap(onBus: 0)
+            input.installTap(onBus: 0, bufferSize: 4096, format: nil) { _, _ in }
+            try engine.start()
+
+            g2BackgroundExecutionEngine = engine
+            G2LabDiagnostics.markBackgroundAudioKeepalive(active: true)
+            Bridge.log("G2LAB_BG: native audio execution keepalive STARTED (G2 remains STT source)")
+        } catch {
+            G2LabDiagnostics.markBackgroundAudioKeepalive(active: false)
+            Bridge.log("G2LAB_BG: failed to start audio execution keepalive: \(error.localizedDescription)")
+            g2BackgroundExecutionEngine?.stop()
+            g2BackgroundExecutionEngine = nil
+        }
+    }
+
+    private func stopG2BackgroundExecutionKeepalive() {
+        guard let engine = g2BackgroundExecutionEngine else { return }
+        if engine.inputNode.engine != nil {
+            engine.inputNode.removeTap(onBus: 0)
+        }
+        engine.stop()
+        g2BackgroundExecutionEngine = nil
+        G2LabDiagnostics.markBackgroundAudioKeepalive(active: false)
+
+        // Do not deactivate a session that PhoneMic has taken over meanwhile.
+        if !PhoneMic.shared.isRecording {
+            try? AVAudioSession.sharedInstance().setActive(
+                false,
+                options: .notifyOthersOnDeactivation
+            )
+        }
+        Bridge.log("G2LAB_BG: native audio execution keepalive STOPPED")
     }
 
     // MARK: - AUX Voice Data Handling

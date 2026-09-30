@@ -27,6 +27,8 @@ final class G2LabDiagnostics {
     private static var lc3SequenceGapCount: Int = 0
     private static var lc3DecodeFailureCount: Int = 0
     private static var backgroundGlassesKeepaliveCount: Int = 0
+    private static var backgroundAudioKeepaliveActive = false
+    private static var backgroundAudioKeepaliveStarts: Int = 0
     private static var longestPartialGapMs: Double = -1
     private static var lastEndpointMs: Double = -1
     private static var audioBacklogMs: Double = -1
@@ -66,6 +68,8 @@ final class G2LabDiagnostics {
         lc3SequenceGapCount = 0
         lc3DecodeFailureCount = 0
         backgroundGlassesKeepaliveCount = 0
+        backgroundAudioKeepaliveActive = false
+        backgroundAudioKeepaliveStarts = 0
         longestPartialGapMs = -1
         lastEndpointMs = -1
         audioBacklogMs = -1
@@ -172,6 +176,15 @@ final class G2LabDiagnostics {
         lock.unlock()
     }
 
+    static func markBackgroundAudioKeepalive(active: Bool) {
+        lock.lock()
+        if active && !backgroundAudioKeepaliveActive {
+            backgroundAudioKeepaliveStarts += 1
+        }
+        backgroundAudioKeepaliveActive = active
+        lock.unlock()
+    }
+
     static func markTranscript(ns: UInt64) {
         lock.lock()
         lastTranscriptMs = nowMs(ns)
@@ -224,6 +237,8 @@ final class G2LabDiagnostics {
             "lc3SequenceGapCount": lc3SequenceGapCount,
             "lc3DecodeFailureCount": lc3DecodeFailureCount,
             "backgroundGlassesKeepaliveCount": backgroundGlassesKeepaliveCount,
+            "backgroundAudioKeepaliveActive": backgroundAudioKeepaliveActive,
+            "backgroundAudioKeepaliveStarts": backgroundAudioKeepaliveStarts,
             "longestPartialGapMs": longestPartialGapMs,
             "lastEndpointAgeMs": age(lastEndpointMs, now: now),
             "audioBacklogMs": audioBacklogMs,
@@ -243,6 +258,14 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
 
     private static let SAMPLE_RATE = 16000 // Sherpa-ONNX model's required sample rate
     private static let QUEUE_CAPACITY = 100 // Max number of audio buffers to keep in queue
+    // Use several CPU threads for large streaming models. The previous single-thread
+    // configuration benchmarked above real time on-device (RTF > 1), which caused
+    // backlog and eventually dropped spoken words.
+    private static let INFERENCE_THREADS = 3
+    // Never wait just to create a batch. If several PCM chunks are already queued,
+    // merge up to this much audio before crossing Swift -> sherpa/ORT so we catch up
+    // with far less per-chunk decoder overhead.
+    private static let MAX_CATCHUP_BATCH_MS: Double = 80.0
 
     private let pcmQueue = DispatchQueue(label: "com.augmentos.sherpaonnx.pcmQueue", qos: .userInteractive)
     private var pcmBuffers = [Data]()
@@ -401,7 +424,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     // Create model config with CTC
                     var modelConfig = sherpaOnnxOnlineModelConfig(
                         tokens: tokensPath,
-                        numThreads: 1,
+                        numThreads: Self.INFERENCE_THREADS,
                         nemoCtc: nemoCtc
                     )
 
@@ -458,7 +481,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     var modelConfig = sherpaOnnxOnlineModelConfig(
                         tokens: tokensPath,
                         transducer: transducer,
-                        numThreads: 1
+                        numThreads: Self.INFERENCE_THREADS
                     )
 
                     // Configure recognizer
@@ -600,7 +623,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
     private func startProcessingTask() {
         Bridge.log("🚀 Starting Sherpa-ONNX processing task...")
 
-        processingQueue = DispatchQueue(label: "com.augmentos.sherpaonnx.processor", qos: .userInitiated)
+        processingQueue = DispatchQueue(label: "com.augmentos.sherpaonnx.processor", qos: .userInteractive)
 
         let workItem = DispatchWorkItem { [weak self] in
             self?.runLoop()
@@ -618,18 +641,42 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
         Bridge.log("🔄 Sherpa-ONNX processing loop started")
 
         while isRunning {
-            // Pull data from queue
+            // Pull one chunk immediately. If a backlog already exists, merge enough
+            // queued chunks to amortize native/ORT call overhead without adding any
+            // intentional waiting to the low-latency path.
             var audioData: Data?
+            var batchAudioMs: Double = 0
+            var batchChunks = 0
+            var remainingDepth = 0
 
             pcmQueue.sync {
-                if !self.pcmBuffers.isEmpty {
-                    audioData = self.pcmBuffers.removeFirst()
+                guard !self.pcmBuffers.isEmpty else { return }
+
+                var merged = Data()
+                while !self.pcmBuffers.isEmpty {
+                    let next = self.pcmBuffers.removeFirst()
+                    let samples = next.count / MemoryLayout<Int16>.size
+                    let nextMs = Double(samples) * 1000.0 / Double(Self.SAMPLE_RATE)
+
+                    merged.append(next)
+                    batchAudioMs += nextMs
+                    batchChunks += 1
+
+                    if self.pcmBuffers.isEmpty || batchAudioMs >= Self.MAX_CATCHUP_BATCH_MS {
+                        break
+                    }
                 }
+                audioData = merged
+                remainingDepth = self.pcmBuffers.count
             }
 
             if let data = audioData {
+                G2LabDiagnostics.markQueue(
+                    depth: remainingDepth,
+                    audioMs: max(self.lastQueuedAudioMs, 0)
+                )
                 let g2TraceDecodeStartNs = DispatchTime.now().uptimeNanoseconds
-                Bridge.log("G2LAB_TRACE STT_DECODE_START ns=\(g2TraceDecodeStartNs) bytes=\(data.count)")
+                Bridge.log("G2LAB_TRACE STT_DECODE_START ns=\(g2TraceDecodeStartNs) bytes=\(data.count) chunks=\(batchChunks) audioMs=\(String(format: "%.2f", batchAudioMs))")
                 // Synchronize access to recognizer to prevent race conditions
                 objc_sync_enter(self)
                 defer { objc_sync_exit(self) }
@@ -660,7 +707,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                             ns: g2TraceDecodeDoneNs,
                             passes: decodeCount,
                             decodeMs: g2TraceDecodeMs,
-                            audioMs: self.lastQueuedAudioMs
+                            audioMs: batchAudioMs
                         )
                         Bridge.log("G2LAB_TRACE STT_DECODE_DONE ns=\(g2TraceDecodeDoneNs) passes=\(decodeCount) decodeMs=\(String(format: "%.3f", g2TraceDecodeMs))")
                     }
@@ -687,7 +734,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                         if partial != lastPartialResult, !partial.isEmpty {
                             let g2TracePartialNs = DispatchTime.now().uptimeNanoseconds
                             let g2TraceDecodeMs = Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0
-                            G2LabDiagnostics.markPartial(ns: g2TracePartialNs, decodeMs: g2TraceDecodeMs, audioMs: self.lastQueuedAudioMs)
+                            G2LabDiagnostics.markPartial(ns: g2TracePartialNs, decodeMs: g2TraceDecodeMs, audioMs: batchAudioMs)
                             Bridge.log("G2LAB_TRACE FIRST_CHANGED_PARTIAL ns=\(g2TracePartialNs) decodeMs=\(String(format: "%.3f", Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0)) chars=\(partial.count)")
                             handleTranscriptionResult(text: partial, isFinal: false)
                             lastPartialResult = partial
