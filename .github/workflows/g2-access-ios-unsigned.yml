@@ -49,15 +49,26 @@ jobs:
           MENTRA_PUBLIC_G2_LABS: "1"
         run: |
           set -euo pipefail
-          # Install the root workspace once. This provides the miniapp CLI and
-          # builds @mentra/miniapp, which the Captions pack consumes.
-          bun install --no-frozen-lockfile
-          bun run build:miniapp
+          # Build the miniapp in an isolated worktree. Root workspace install
+          # must never mutate the dependency graph used by the iOS app build;
+          # doing so caused React Native Skia's Apple prebuilts to disappear.
+          TMP_WORKTREE="$RUNNER_TEMP/g2labs-captions-worktree"
+          rm -rf "$TMP_WORKTREE"
+          git worktree add --detach "$TMP_WORKTREE" HEAD
+          cleanup() {
+            git worktree remove --force "$TMP_WORKTREE" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
           (
+            cd "$TMP_WORKTREE"
+            bun install --no-frozen-lockfile
+            bun run build:miniapp
             cd miniapps/captions
             bun run pack
           )
-          CAPTIONS_ZIP="miniapps/captions/build/com.mentra.captions-1.0.17.zip"
+
+          CAPTIONS_ZIP="$TMP_WORKTREE/miniapps/captions/build/com.mentra.captions-1.0.17.zip"
           test -f "$CAPTIONS_ZIP" || { echo "::error::Captions 1.0.17 bundle was not produced"; exit 1; }
           rm -f mobile/assets/miniapps/com.mentra.captions-*.zip
           cp "$CAPTIONS_ZIP" mobile/assets/miniapps/com.mentra.captions-1.0.17.zip
@@ -68,9 +79,8 @@ jobs:
         working-directory: mobile
         run: |
           set -euo pipefail
-          # G2_ACCESS_BUILD makes mobile/preinstall skip only the redundant
-          # root-workspace recursion. Keep lifecycle scripts enabled so native
-          # dependencies such as React Native Skia install their prebuilts.
+          # This is now a clean mobile install, matching the last-known-good
+          # successful iOS build path.
           bun install --no-frozen-lockfile
 
       - name: Restore React Native Skia prebuilt binaries
