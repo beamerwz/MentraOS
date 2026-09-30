@@ -4,6 +4,22 @@ class STTTools {
     private static let nemotronMarker = ".g2labs-nemotron-v2"
     private static var stagedModel: (path: String, languageCode: String)?
 
+    // Two-phase activation guard for untrusted/custom models.
+    // staged -> next clean launch marks testing -> recognizer smoke test must clear it.
+    // If the process dies while state == testing, the next launch automatically
+    // restores the last model that completed a native smoke test.
+    private static let activationStateKey = "G2LabsSTTActivationState"
+    private static let candidatePathKey = "G2LabsSTTCandidatePath"
+    private static let candidateLanguageKey = "G2LabsSTTCandidateLanguage"
+    private static let lastGoodPathKey = "G2LabsSTTLastKnownGoodPath"
+    private static let lastGoodLanguageKey = "G2LabsSTTLastKnownGoodLanguage"
+    private static let lastRecoveryReasonKey = "G2LabsSTTLastRecoveryReason"
+
+    private enum ActivationState: String {
+        case staged
+        case testing
+    }
+
     static func modelPathForRecognizer() -> String? {
         return stagedModel?.path ?? UserDefaults.standard.string(forKey: "STTModelPath")
     }
@@ -100,18 +116,111 @@ class STTTools {
         UserDefaults.standard.synchronize()
     }
 
+    private static func clearActivationGuard() {
+        UserDefaults.standard.removeObject(forKey: activationStateKey)
+        UserDefaults.standard.removeObject(forKey: candidatePathKey)
+        UserDefaults.standard.removeObject(forKey: candidateLanguageKey)
+        UserDefaults.standard.synchronize()
+    }
+
+    private static func rememberLastKnownGood(path: String, languageCode: String) {
+        guard !path.isEmpty, validateSTTModel(path) else { return }
+        UserDefaults.standard.set(path, forKey: lastGoodPathKey)
+        UserDefaults.standard.set(languageCode, forKey: lastGoodLanguageKey)
+        UserDefaults.standard.synchronize()
+    }
+
+    /// Persist a candidate while retaining a rollback target that has already
+    /// survived native recognizer initialization.
+    static func stageCandidateForActivation(_ path: String, _ languageCode: String) {
+        let defaults = UserDefaults.standard
+        let currentPath = defaults.string(forKey: "STTModelPath") ?? ""
+        let currentLanguage = defaults.string(forKey: "STTModelLanguageCode") ?? "it-IT"
+
+        if currentPath != path {
+            rememberLastKnownGood(path: currentPath, languageCode: currentLanguage)
+        }
+
+        defaults.set(path, forKey: candidatePathKey)
+        defaults.set(languageCode, forKey: candidateLanguageKey)
+        defaults.set(ActivationState.staged.rawValue, forKey: activationStateKey)
+        defaults.set(path, forKey: "STTModelPath")
+        defaults.set(languageCode, forKey: "STTModelLanguageCode")
+        defaults.synchronize()
+    }
+
+    /// Called immediately before attempting candidate construction in the same
+    /// process. Clean-launch candidates are transitioned in recovery below.
+    static func beginStagedModelTestIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard defaults.string(forKey: activationStateKey) == ActivationState.staged.rawValue else {
+            return
+        }
+        defaults.set(ActivationState.testing.rawValue, forKey: activationStateKey)
+        defaults.synchronize()
+    }
+
+    /// A real native smoke test + stream recreation completed. The current
+    /// selection is now safe enough to become the new rollback point.
+    static func markCurrentModelReady() {
+        let defaults = UserDefaults.standard
+        let path = defaults.string(forKey: "STTModelPath") ?? ""
+        let language = defaults.string(forKey: "STTModelLanguageCode") ?? "it-IT"
+        rememberLastKnownGood(path: path, languageCode: language)
+        clearActivationGuard()
+        defaults.removeObject(forKey: lastRecoveryReasonKey)
+        defaults.synchronize()
+    }
+
+    private static func restoreLastKnownGood(reason: String) -> Bool {
+        let defaults = UserDefaults.standard
+        let path = defaults.string(forKey: lastGoodPathKey) ?? ""
+        let language = defaults.string(forKey: lastGoodLanguageKey) ?? "it-IT"
+
+        if !path.isEmpty, validateSTTModel(path) {
+            Bridge.log("STT crash guard: \(reason); restoring last-known-good model \(path)")
+            defaults.set(path, forKey: "STTModelPath")
+            defaults.set(language, forKey: "STTModelLanguageCode")
+            defaults.set(reason, forKey: lastRecoveryReasonKey)
+            clearActivationGuard()
+            defaults.synchronize()
+            return true
+        }
+
+        clearActivationGuard()
+        return forceItalianBuiltIn(reason: reason)
+    }
+
     /// Model selection is constructed only once per clean process launch.
     /// Do not rewrite a valid persisted selection here: live teardown/recreate is
     /// deliberately avoided because it can invalidate ORT's global API on iOS.
     static func recoverPersistedModelBeforeInitialization() {
-        guard let modelPath = UserDefaults.standard.string(forKey: "STTModelPath") else { return }
+        let defaults = UserDefaults.standard
+        let state = defaults.string(forKey: activationStateKey)
+
+        // A previous launch reached the risky native construction phase but
+        // never reported readiness. Treat that as a failed/crashed candidate.
+        if state == ActivationState.testing.rawValue {
+            _ = restoreLastKnownGood(reason: "previous candidate did not finish native activation")
+            return
+        }
+
+        // First clean launch after staging: arm the crash detector BEFORE ONNX
+        // Runtime is touched. A hard native crash leaves this marker behind.
+        if state == ActivationState.staged.rawValue {
+            defaults.set(ActivationState.testing.rawValue, forKey: activationStateKey)
+            defaults.synchronize()
+        }
+
+        guard let modelPath = defaults.string(forKey: "STTModelPath") else { return }
         if !validateSTTModel(modelPath) {
-            _ = forceItalianBuiltIn(reason: "persisted STT model is incomplete")
+            _ = restoreLastKnownGood(reason: "persisted STT model is incomplete")
         }
     }
 
     @discardableResult
     static func fallbackToItalianBuiltIn(reason: String) -> Bool {
+        clearActivationGuard()
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         let italianPath = documents.appendingPathComponent("stt_models/it").path
         if validateSTTModel(italianPath) {
@@ -138,6 +247,7 @@ class STTTools {
     @discardableResult
     static func forceItalianBuiltIn(reason: String) -> Bool {
         clearStagedModel()
+        clearActivationGuard()
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         let italianPath = documents.appendingPathComponent("stt_models/it").path
         guard validateSTTModel(italianPath) else {

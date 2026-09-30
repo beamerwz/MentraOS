@@ -640,6 +640,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
             startProcessingTask()
 
             G2LabDiagnostics.markModel(state: "ready", path: STTTools.modelPathForRecognizer() ?? "")
+            STTTools.markCurrentModelReady()
             Bridge.log("Sherpa-ONNX ASR initialized successfully with \(modelType) model")
             return true
 

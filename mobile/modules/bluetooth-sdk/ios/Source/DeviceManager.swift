@@ -1225,7 +1225,7 @@ struct ViewState {
             return false
         }
 
-        STTTools.setSttModelDetails(path, languageCode)
+        STTTools.stageCandidateForActivation(path, languageCode)
 
         guard let transcriber else {
             G2LabDiagnostics.markModel(state: "staged-relaunch", path: path)
@@ -1249,6 +1249,8 @@ struct ViewState {
 
         // Fresh process with no recognizer created yet: initialize the selected model now,
         // but never on MainActor so model mmap/session creation cannot starve G2 BLE.
+        // Mark testing before native ORT construction so even a hard crash is recoverable.
+        STTTools.beginStagedModelTestIfNeeded()
         G2LabDiagnostics.resetPipeline()
         G2LabDiagnostics.markModel(state: "initializing", path: path)
         let worker = transcriber
