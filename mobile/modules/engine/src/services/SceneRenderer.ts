@@ -265,6 +265,12 @@ class SceneRenderer {
 
   private sendFrame(frame: SceneFrame): void {
     try {
+      // Only actual Captions scene frames count as the final G2 benchmark stage.
+      // This avoids system boot/clear frames making a dead caption pipeline look healthy.
+      if (frame.appId === "com.mentra.captions") {
+        BluetoothSdk.markG2LabDisplay()
+      }
+
       // sendDisplayEvent hook -> direct BluetoothSdk.displayEvent (the exact
       // wiring the deleted MantleManager hook provided).
       void Promise.resolve(BluetoothSdk.displayEvent({view: frame.view, scene: frame})).catch((err) => {
