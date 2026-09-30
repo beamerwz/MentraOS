@@ -22,12 +22,13 @@ const ThemeContext = createContext<ThemeContextType>({
 })
 
 const themeNameToTheme = (name: ColorSchemeName): Theme => (name === "dark" ? darkTheme : lightTheme)
+const IS_G2_LABS = process.env.EXPO_PUBLIC_G2_LABS === "1"
 
 export type ThemeType = "light" | "dark" | "system"
 
 export const ThemeProvider: FC<{children: React.ReactNode}> = ({children}) => {
   const colorScheme = useColorScheme()
-  const [overrideTheme, setTheme] = useState<ThemeContexts>(undefined)
+  const [overrideTheme, setTheme] = useState<ThemeContexts>(IS_G2_LABS ? "dark" : undefined)
   const [savedTheme] = useSetting(SETTINGS.theme_preference.key)
   const hasLoaded = useRef(false)
 
@@ -58,6 +59,12 @@ export const ThemeProvider: FC<{children: React.ReactNode}> = ({children}) => {
   useEffect(() => {
     console.log("loadThemePreference", savedTheme, colorScheme)
 
+    if (IS_G2_LABS) {
+      updateThemeType("dark", true)
+      hasLoaded.current = true
+      return
+    }
+
     if (savedTheme !== "system") {
       updateThemeType(savedTheme, true)
     } else {
@@ -72,6 +79,7 @@ export const ThemeProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
   useEffect(() => {
     console.log("colorScheme changed", colorScheme)
+    if (IS_G2_LABS) return
     if (!hasLoaded.current) {
       return
     }
@@ -87,6 +95,7 @@ export const ThemeProvider: FC<{children: React.ReactNode}> = ({children}) => {
 
   // react to the setting being changed:
   useEffect(() => {
+    if (IS_G2_LABS) return
     if (!hasLoaded.current) {
       return
     }
@@ -101,7 +110,7 @@ export const ThemeProvider: FC<{children: React.ReactNode}> = ({children}) => {
     updateThemeType(themeType, false)
   }, [savedTheme])
 
-  const themeScheme: ThemeContexts = overrideTheme || (colorScheme === "dark" ? "dark" : "light")
+  const themeScheme: ThemeContexts = IS_G2_LABS ? "dark" : overrideTheme || (colorScheme === "dark" ? "dark" : "light")
 
   return <ThemeContext.Provider value={{themeScheme, setThemeContextOverride}}>{children}</ThemeContext.Provider>
 }
