@@ -353,14 +353,9 @@ struct ViewState {
         // Initialize SherpaOnnx Transcriber
         #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
         STTTools.recoverPersistedModelBeforeInitialization()
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first,
-           let rootViewController = window.rootViewController
-        {
-            transcriber = SherpaOnnxTranscriber(context: rootViewController)
-        } else {
-            Bridge.log("Failed to create SherpaOnnxTranscriber - no root view controller found")
-        }
+        // Sherpa needs model file paths only; it must not depend on UIKit being
+        // ready during this early singleton initialization.
+        transcriber = SherpaOnnxTranscriber()
 
         // Initialize model runtime away from MainActor. Loading a 600+ MB model on
         // the BLE/UI actor stalls G2 notifications and looks exactly like a lost connection.
