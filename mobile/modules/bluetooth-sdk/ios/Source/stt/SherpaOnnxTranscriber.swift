@@ -21,6 +21,7 @@ final class G2LabDiagnostics {
     private static var partialIntervalMs: Double = -1
     private static var partialTimesMs: [Double] = []
     private static var decodeRtf: Double = -1
+    private static var decodePasses: Int = 0
     private static var audioBacklogMs: Double = -1
     private static var sttToDisplayMs: Double = -1
 
@@ -52,6 +53,7 @@ final class G2LabDiagnostics {
         partialIntervalMs = -1
         partialTimesMs.removeAll(keepingCapacity: true)
         decodeRtf = -1
+        decodePasses = 0
         audioBacklogMs = -1
         sttToDisplayMs = -1
         lastError = ""
@@ -96,9 +98,13 @@ final class G2LabDiagnostics {
         lock.unlock()
     }
 
-    static func markDecode(ns: UInt64) {
+    static func markDecodeBatch(ns: UInt64, passes: Int, decodeMs: Double, audioMs: Double) {
         lock.lock()
         lastDecodeMs = nowMs(ns)
+        decodePasses += max(0, passes)
+        if audioMs > 0 {
+            decodeRtf = max(0, decodeMs / audioMs)
+        }
         lock.unlock()
     }
 
@@ -166,6 +172,7 @@ final class G2LabDiagnostics {
             "partialIntervalMs": partialIntervalMs,
             "changedPartialsPerSec": Double(recentOneSecond),
             "decodeRtf": decodeRtf,
+            "decodePasses": decodePasses,
             "audioBacklogMs": audioBacklogMs,
             "sttToDisplayMs": sttToDisplayMs,
         ]
@@ -434,28 +441,25 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                 throw NSError(domain: "SherpaOnnxTranscriber", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to create recognizer"])
             }
 
-            // Nemotron 3.5 multilingual requires a prompt_index on every stream.
-            // 101 selects automatic language prompting; keep the explicit language hint too.
-            // These options must be present before the first AcceptWaveform/decode.
-            if modelType == "transducer" {
-                try recognizer?.setOption(key: "prompt_index", value: "101")
-                Bridge.log("Sherpa stream prompt_index option: 101")
-            }
-            if let languageCode = STTTools.languageForRecognizer(), !languageCode.isEmpty {
+            let selectedModelPath = STTTools.modelPathForRecognizer()?.lowercased() ?? ""
+            let isNemotron = selectedModelPath.contains("nemotron")
+            let streamLanguage = STTTools.languageForRecognizer()
+
+            // Multilingual Nemotron derives its numerical prompt id internally from
+            // the language string plus encoder metadata. Forcing prompt_index here
+            // can select the wrong prompt and produce endless empty hypotheses.
+            // Generic Kroko/Zipformer transducers do not need this stream option.
+            if isNemotron, let languageCode = streamLanguage, !languageCode.isEmpty {
                 try recognizer?.setOption(key: "language", value: languageCode)
-                Bridge.log("Sherpa stream language option: \(languageCode)")
+                Bridge.log("Sherpa Nemotron language option: \(languageCode)")
             }
 
-            // Construction alone does not execute OnlineTransducerNeMoModel::RunEncoder.
-            // Decode silence once so an incompatible cache/prompt tensor contract fails
-            // before this recognizer is considered usable.
+            // Construction alone does not execute the first encoder pass.
+            // Run a bounded readiness smoke test before declaring the model live.
             try recognizer?.smokeTest(sampleRate: Self.SAMPLE_RATE)
             try recognizer?.recreateStream()
-            // recreateStream() replaces the native stream, so reapply every per-stream option.
-            if modelType == "transducer" {
-                try recognizer?.setOption(key: "prompt_index", value: "101")
-            }
-            if let languageCode = STTTools.languageForRecognizer(), !languageCode.isEmpty {
+            // recreateStream() replaces the native stream, so reapply Nemotron language.
+            if isNemotron, let languageCode = streamLanguage, !languageCode.isEmpty {
                 try recognizer?.setOption(key: "language", value: languageCode)
             }
 
@@ -567,7 +571,6 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
 
             if let data = audioData {
                 let g2TraceDecodeStartNs = DispatchTime.now().uptimeNanoseconds
-                G2LabDiagnostics.markDecode(ns: g2TraceDecodeStartNs)
                 Bridge.log("G2LAB_TRACE STT_DECODE_START ns=\(g2TraceDecodeStartNs) bytes=\(data.count)")
                 // Synchronize access to recognizer to prevent race conditions
                 objc_sync_enter(self)
@@ -590,6 +593,18 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     while try recognizer.isReady() {
                         try recognizer.decode()
                         decodeCount += 1
+                    }
+
+                    if decodeCount > 0 {
+                        let g2TraceDecodeDoneNs = DispatchTime.now().uptimeNanoseconds
+                        let g2TraceDecodeMs = Double(g2TraceDecodeDoneNs - g2TraceDecodeStartNs) / 1_000_000.0
+                        G2LabDiagnostics.markDecodeBatch(
+                            ns: g2TraceDecodeDoneNs,
+                            passes: decodeCount,
+                            decodeMs: g2TraceDecodeMs,
+                            audioMs: self.lastQueuedAudioMs
+                        )
+                        Bridge.log("G2LAB_TRACE STT_DECODE_DONE ns=\(g2TraceDecodeDoneNs) passes=\(decodeCount) decodeMs=\(String(format: "%.3f", g2TraceDecodeMs))")
                     }
 
                     // If utterance endpoint detected

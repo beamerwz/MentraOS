@@ -23,6 +23,7 @@ type NativeDiagnostics = {
   partialIntervalMs?: number
   changedPartialsPerSec?: number
   decodeRtf?: number
+  decodePasses?: number
   audioBacklogMs?: number
   sttToDisplayMs?: number
 }
@@ -32,6 +33,7 @@ type Metrics = {
   partialInterval: string
   changedRate: string
   decodeRtf: string
+  decoderPasses: string
   backlog: string
   sttToG2: string
 }
@@ -105,6 +107,7 @@ export default function G2ModelLab() {
       partialInterval: metric(diagnostics.partialIntervalMs),
       changedRate: metric(diagnostics.changedPartialsPerSec, 1),
       decodeRtf: metric(diagnostics.decodeRtf, 2),
+      decoderPasses: metric(diagnostics.decodePasses),
       backlog: metric(diagnostics.audioBacklogMs),
       sttToG2: metric(diagnostics.sttToDisplayMs),
     }),
@@ -347,6 +350,7 @@ export default function G2ModelLab() {
             ["Partial interval", metrics.partialInterval + " ms"],
             ["Changed partials/sec", metrics.changedRate],
             ["Decode RTF", metrics.decodeRtf],
+            ["Decoder passes", metrics.decoderPasses],
             ["Audio backlog", metrics.backlog + " ms"],
             ["STT → display", metrics.sttToG2 + " ms"],
           ].map(([key, value]) => (
