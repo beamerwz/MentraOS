@@ -24,6 +24,9 @@ final class G2LabDiagnostics {
     private static var decodePasses: Int = 0
     private static var endpointCount: Int = 0
     private static var queueDropCount: Int = 0
+    private static var lc3SequenceGapCount: Int = 0
+    private static var lc3DecodeFailureCount: Int = 0
+    private static var backgroundGlassesKeepaliveCount: Int = 0
     private static var longestPartialGapMs: Double = -1
     private static var lastEndpointMs: Double = -1
     private static var audioBacklogMs: Double = -1
@@ -60,6 +63,9 @@ final class G2LabDiagnostics {
         decodePasses = 0
         endpointCount = 0
         queueDropCount = 0
+        lc3SequenceGapCount = 0
+        lc3DecodeFailureCount = 0
+        backgroundGlassesKeepaliveCount = 0
         longestPartialGapMs = -1
         lastEndpointMs = -1
         audioBacklogMs = -1
@@ -148,6 +154,24 @@ final class G2LabDiagnostics {
         lock.unlock()
     }
 
+    static func markLc3SequenceGap() {
+        lock.lock()
+        lc3SequenceGapCount += 1
+        lock.unlock()
+    }
+
+    static func markLc3DecodeFailure() {
+        lock.lock()
+        lc3DecodeFailureCount += 1
+        lock.unlock()
+    }
+
+    static func markBackgroundGlassesKeepalive() {
+        lock.lock()
+        backgroundGlassesKeepaliveCount += 1
+        lock.unlock()
+    }
+
     static func markTranscript(ns: UInt64) {
         lock.lock()
         lastTranscriptMs = nowMs(ns)
@@ -197,6 +221,9 @@ final class G2LabDiagnostics {
             "decodePasses": decodePasses,
             "endpointCount": endpointCount,
             "queueDropCount": queueDropCount,
+            "lc3SequenceGapCount": lc3SequenceGapCount,
+            "lc3DecodeFailureCount": lc3DecodeFailureCount,
+            "backgroundGlassesKeepaliveCount": backgroundGlassesKeepaliveCount,
             "longestPartialGapMs": longestPartialGapMs,
             "lastEndpointAgeMs": age(lastEndpointMs, now: now),
             "audioBacklogMs": audioBacklogMs,

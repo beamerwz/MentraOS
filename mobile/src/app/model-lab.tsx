@@ -29,6 +29,9 @@ type NativeDiagnostics = {
   decodePasses?: number
   endpointCount?: number
   queueDropCount?: number
+  lc3SequenceGapCount?: number
+  lc3DecodeFailureCount?: number
+  backgroundGlassesKeepaliveCount?: number
   longestPartialGapMs?: number
   lastEndpointAgeMs?: number
   audioBacklogMs?: number
@@ -43,6 +46,9 @@ type Metrics = {
   decoderPasses: string
   endpoints: string
   queueDrops: string
+  lc3SequenceGaps: string
+  lc3DecodeFailures: string
+  backgroundKeepalives: string
   longestPartialGap: string
   backlog: string
   sttToG2: string
@@ -120,6 +126,9 @@ export default function G2ModelLab() {
       decoderPasses: metric(diagnostics.decodePasses),
       endpoints: metric(diagnostics.endpointCount),
       queueDrops: metric(diagnostics.queueDropCount),
+      lc3SequenceGaps: metric(diagnostics.lc3SequenceGapCount),
+      lc3DecodeFailures: metric(diagnostics.lc3DecodeFailureCount),
+      backgroundKeepalives: metric(diagnostics.backgroundGlassesKeepaliveCount),
       longestPartialGap: metric(diagnostics.longestPartialGapMs),
       backlog: metric(diagnostics.audioBacklogMs),
       sttToG2: metric(diagnostics.sttToDisplayMs),
@@ -366,6 +375,9 @@ export default function G2ModelLab() {
             ["Decoder passes", metrics.decoderPasses],
             ["Endpoints / resets", metrics.endpoints],
             ["PCM queue drops", metrics.queueDrops],
+            ["G2 LC3 sequence gaps", metrics.lc3SequenceGaps],
+            ["G2 LC3 decode failures", metrics.lc3DecodeFailures],
+            ["Background G2 keepalives", metrics.backgroundKeepalives],
             ["Longest partial gap", metrics.longestPartialGap + " ms"],
             ["Audio backlog", metrics.backlog + " ms"],
             ["STT → display", metrics.sttToG2 + " ms"],

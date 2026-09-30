@@ -311,6 +311,7 @@ struct ViewState {
     private var lastLc3ReceivedAt: Int64?
     private var lastPcmProducedAt: Int64?
     private var lastLc3Sequence: Int?
+    private var lastBackgroundGlassesKeepaliveNs: UInt64 = 0
     private var micReinitTimer: Timer?
 
     /// STT:
@@ -427,6 +428,23 @@ struct ViewState {
         let g2TraceLc3Ns = DispatchTime.now().uptimeNanoseconds
         G2LabDiagnostics.markLc3(ns: g2TraceLc3Ns)
         Bridge.log("G2LAB_TRACE T0_LC3 ns=\(g2TraceLc3Ns) bytes=\(lc3Data.count) frameMs=\(frameSize) seq=\(sequenceNumber.map(String.init) ?? "-")")
+
+        // G2's microphone is part of the live EvenHub page/session. iOS can keep
+        // receiving CoreBluetooth notifications in the background, but ordinary
+        // timers/Task.sleep heartbeats are not guaranteed to run there. While the
+        // LC3 stream itself is waking us, piggyback one heartbeat every ~8 s so
+        // the EvenHub page/mic session stays armed after the phone is locked or
+        // G2 LABS leaves the foreground.
+        if UIApplication.shared.applicationState != .active,
+           g2TraceLc3Ns - lastBackgroundGlassesKeepaliveNs >= 8_000_000_000
+        {
+            lastBackgroundGlassesKeepaliveNs = g2TraceLc3Ns
+            G2LabDiagnostics.markBackgroundGlassesKeepalive()
+            DispatchQueue.main.async { [weak self] in
+                self?.sgc?.ping()
+            }
+        }
+
         recordLc3Packet(sequenceNumber: sequenceNumber)
         guard let lc3Converter = lc3Converter else {
             Bridge.log("MAN: LC3 converter not initialized")
@@ -501,6 +519,7 @@ struct ViewState {
                 if normalized != expected {
                     hasGap = true
                     sequenceGapEvents += 1
+                    G2LabDiagnostics.markLc3SequenceGap()
                     Bridge.log("MAN: LC3 packet sequence mismatch. Expected: \(expected), Got: \(normalized)")
                 }
             }
@@ -513,6 +532,7 @@ struct ViewState {
 
     private func recordMicDecodeFailure() {
         decodeFailures += 1
+        G2LabDiagnostics.markLc3DecodeFailure()
         Bridge.sendMicHealth(micHealth(), reason: "decode_failure")
     }
 
