@@ -1,7 +1,7 @@
 import {useEffect, useMemo, useState} from "react"
 import {ActivityIndicator, Pressable, ScrollView, Text as RNText, View} from "react-native"
 import * as DocumentPicker from "expo-document-picker"
-import RNFS from "@dr.pogodin/react-native-fs"
+import * as RNFS from "@dr.pogodin/react-native-fs"
 import {router} from "expo-router"
 
 import {Screen} from "@/components/ignite"
