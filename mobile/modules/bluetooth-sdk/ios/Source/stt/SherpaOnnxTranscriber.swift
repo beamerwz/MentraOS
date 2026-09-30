@@ -1,13 +1,184 @@
 import Foundation
 import UIKit
 
+/// Persistent, process-lifetime diagnostics for G2 LABS.
+/// The Model Lab polls this snapshot even after a Captions session has been opened/closed,
+/// so a dead pipeline can be localized without needing Xcode logs.
+final class G2LabDiagnostics {
+    private static let lock = NSLock()
+
+    private static var lastLc3Ms: Double = -1
+    private static var lastPcmMs: Double = -1
+    private static var lastIngestMs: Double = -1
+    private static var lastDecodeMs: Double = -1
+    private static var lastTranscriptMs: Double = -1
+    private static var lastBridgeMs: Double = -1
+    private static var lastDisplayMs: Double = -1
+
+    private static var firstIngestMs: Double = -1
+    private static var firstPartialLatencyMs: Double = -1
+    private static var previousPartialMs: Double = -1
+    private static var partialIntervalMs: Double = -1
+    private static var partialTimesMs: [Double] = []
+    private static var decodeRtf: Double = -1
+    private static var audioBacklogMs: Double = -1
+    private static var sttToDisplayMs: Double = -1
+
+    private static var modelState = "no-model"
+    private static var modelPath = ""
+    private static var lastError = ""
+
+    private static func nowMs(_ ns: UInt64? = nil) -> Double {
+        Double(ns ?? DispatchTime.now().uptimeNanoseconds) / 1_000_000.0
+    }
+
+    private static func age(_ timestampMs: Double, now: Double) -> Double {
+        timestampMs < 0 ? -1 : max(0, now - timestampMs)
+    }
+
+    static func resetPipeline() {
+        lock.lock()
+        defer { lock.unlock() }
+        lastLc3Ms = -1
+        lastPcmMs = -1
+        lastIngestMs = -1
+        lastDecodeMs = -1
+        lastTranscriptMs = -1
+        lastBridgeMs = -1
+        lastDisplayMs = -1
+        firstIngestMs = -1
+        firstPartialLatencyMs = -1
+        previousPartialMs = -1
+        partialIntervalMs = -1
+        partialTimesMs.removeAll(keepingCapacity: true)
+        decodeRtf = -1
+        audioBacklogMs = -1
+        sttToDisplayMs = -1
+        lastError = ""
+    }
+
+    static func markModel(state: String, path: String? = nil) {
+        lock.lock()
+        modelState = state
+        if let path { modelPath = path }
+        lock.unlock()
+    }
+
+    static func markError(_ message: String) {
+        lock.lock()
+        lastError = message
+        lock.unlock()
+    }
+
+    static func markLc3(ns: UInt64) {
+        lock.lock()
+        lastLc3Ms = nowMs(ns)
+        lock.unlock()
+    }
+
+    static func markPcm(ns: UInt64) {
+        lock.lock()
+        lastPcmMs = nowMs(ns)
+        lock.unlock()
+    }
+
+    static func markIngest(ns: UInt64) {
+        let t = nowMs(ns)
+        lock.lock()
+        lastIngestMs = t
+        if firstIngestMs < 0 { firstIngestMs = t }
+        lock.unlock()
+    }
+
+    static func markQueue(depth: Int, audioMs: Double) {
+        lock.lock()
+        audioBacklogMs = Double(max(0, depth)) * max(0, audioMs)
+        lock.unlock()
+    }
+
+    static func markDecode(ns: UInt64) {
+        lock.lock()
+        lastDecodeMs = nowMs(ns)
+        lock.unlock()
+    }
+
+    static func markPartial(ns: UInt64, decodeMs: Double, audioMs: Double) {
+        let t = nowMs(ns)
+        lock.lock()
+        if firstPartialLatencyMs < 0, firstIngestMs >= 0 {
+            firstPartialLatencyMs = max(0, t - firstIngestMs)
+        }
+        if previousPartialMs >= 0 {
+            partialIntervalMs = max(0, t - previousPartialMs)
+        }
+        previousPartialMs = t
+        partialTimesMs.append(t)
+        partialTimesMs.removeAll { $0 < t - 5_000 }
+        if audioMs > 0 {
+            decodeRtf = max(0, decodeMs / audioMs)
+        }
+        lock.unlock()
+    }
+
+    static func markTranscript(ns: UInt64) {
+        lock.lock()
+        lastTranscriptMs = nowMs(ns)
+        lock.unlock()
+    }
+
+    static func markBridge(ns: UInt64) {
+        lock.lock()
+        lastBridgeMs = nowMs(ns)
+        lock.unlock()
+    }
+
+    static func markDisplay(ns: UInt64) {
+        let t = nowMs(ns)
+        lock.lock()
+        lastDisplayMs = t
+        if lastTranscriptMs >= 0, t >= lastTranscriptMs, t - lastTranscriptMs < 10_000 {
+            sttToDisplayMs = t - lastTranscriptMs
+        }
+        lock.unlock()
+    }
+
+    static func snapshot() -> [String: Any] {
+        let now = nowMs()
+        lock.lock()
+        defer { lock.unlock() }
+
+        partialTimesMs.removeAll { $0 < now - 5_000 }
+        let recentOneSecond = partialTimesMs.filter { $0 >= now - 1_000 }.count
+
+        return [
+            "nowMs": now,
+            "modelState": modelState,
+            "modelPath": modelPath,
+            "lastError": lastError,
+            "lc3AgeMs": age(lastLc3Ms, now: now),
+            "pcmAgeMs": age(lastPcmMs, now: now),
+            "ingestAgeMs": age(lastIngestMs, now: now),
+            "decodeAgeMs": age(lastDecodeMs, now: now),
+            "transcriptAgeMs": age(lastTranscriptMs, now: now),
+            "bridgeAgeMs": age(lastBridgeMs, now: now),
+            "displayAgeMs": age(lastDisplayMs, now: now),
+            "firstPartialMs": firstPartialLatencyMs,
+            "partialIntervalMs": partialIntervalMs,
+            "changedPartialsPerSec": Double(recentOneSecond),
+            "decodeRtf": decodeRtf,
+            "audioBacklogMs": audioBacklogMs,
+            "sttToDisplayMs": sttToDisplayMs,
+        ]
+    }
+}
+
 /**
  * SherpaOnnxTranscriber handles real-time audio transcription using Sherpa-ONNX.
  *
  * It works fully offline and processes PCM audio in real-time to provide partial and final ASR results.
  * This class runs on a background thread, processes short PCM chunks, and emits transcribed text using a delegate.
  */
-class SherpaOnnxTranscriber {
+final class SherpaOnnxTranscriber: @unchecked Sendable {
     private static let TAG = "SherpaOnnxTranscriber"
 
     private static let SAMPLE_RATE = 16000 // Sherpa-ONNX model's required sample rate
@@ -16,6 +187,10 @@ class SherpaOnnxTranscriber {
     private let pcmQueue = DispatchQueue(label: "com.augmentos.sherpaonnx.pcmQueue", qos: .userInteractive)
     private var pcmBuffers = [Data]()
     private var isRunning = false
+    private let lifecycleLock = NSLock()
+    private var initializationInProgress = false
+    private var nativeRecognizerCreationAttempted = false
+    private var lastQueuedAudioMs: Double = 0
     private var processingQueue: DispatchQueue?
     private var processingTask: DispatchWorkItem?
 
@@ -65,6 +240,39 @@ class SherpaOnnxTranscriber {
         return nil
     }
 
+    var canInitializeSelectedModelInProcess: Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        return !initializationInProgress && !nativeRecognizerCreationAttempted && recognizer == nil && !isRunning
+    }
+
+    var hasActiveRecognizer: Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        return recognizer != nil && isRunning
+    }
+
+    private func beginInitialization() -> Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        if isRunning { return false }
+        if initializationInProgress { return false }
+        initializationInProgress = true
+        return true
+    }
+
+    private func endInitialization() {
+        lifecycleLock.lock()
+        initializationInProgress = false
+        lifecycleLock.unlock()
+    }
+
+    private func noteRecognizerCreationAttempt() {
+        lifecycleLock.lock()
+        nativeRecognizerCreationAttempted = true
+        lifecycleLock.unlock()
+    }
+
     /**
      * Constructor that accepts a UIViewController to load model assets.
      */
@@ -83,6 +291,19 @@ class SherpaOnnxTranscriber {
      */
     @discardableResult
     func initialize() -> Bool {
+        if hasActiveRecognizer { return true }
+        guard beginInitialization() else {
+            G2LabDiagnostics.markError("STT initialization is already in progress")
+            return false
+        }
+        defer { endInitialization() }
+
+        if let selectedPath = Self.customModelPath {
+            G2LabDiagnostics.markModel(state: "initializing", path: selectedPath)
+        } else {
+            G2LabDiagnostics.markModel(state: "no-model", path: "")
+        }
+
         do {
             var tokensPath: String
             var modelType = "unknown"
@@ -138,7 +359,9 @@ class SherpaOnnxTranscriber {
                         rule3MinUtteranceLength: 10.0
                     )
 
-                    // Create recognizer with the wrapper
+                    // The first native recognizer construction owns ORT for this process.
+                    // Never tear it down and construct a different model in-process.
+                    noteRecognizerCreationAttempt()
                     recognizer = try SherpaOnnxRecognizer(config: &config)
 
                 } else if let transducerEncoderPath {
@@ -190,7 +413,9 @@ class SherpaOnnxTranscriber {
                         rule3MinUtteranceLength: 10.0
                     )
 
-                    // Create recognizer with the wrapper
+                    // The first native recognizer construction owns ORT for this process.
+                    // Never tear it down and construct a different model in-process.
+                    noteRecognizerCreationAttempt()
                     recognizer = try SherpaOnnxRecognizer(config: &config)
 
                 } else {
@@ -203,6 +428,7 @@ class SherpaOnnxTranscriber {
                 Bridge.log("Please download a model using the model downloader in settings.")
                 recognizer = nil
                 isRunning = false
+                G2LabDiagnostics.markModel(state: "no-model", path: "")
                 return true
             }
 
@@ -238,11 +464,15 @@ class SherpaOnnxTranscriber {
             isRunning = true
             startProcessingTask()
 
+            G2LabDiagnostics.markModel(state: "ready", path: STTTools.modelPathForRecognizer() ?? "")
             Bridge.log("Sherpa-ONNX ASR initialized successfully with \(modelType) model")
             return true
 
         } catch {
-            Bridge.log("Failed to initialize Sherpa-ONNX: \(error.localizedDescription)")
+            let message = error.localizedDescription
+            Bridge.log("Failed to initialize Sherpa-ONNX: \(message)")
+            G2LabDiagnostics.markModel(state: "failed", path: STTTools.modelPathForRecognizer() ?? "")
+            G2LabDiagnostics.markError(message)
             recognizer = nil
             isRunning = false
             return false
@@ -254,6 +484,7 @@ class SherpaOnnxTranscriber {
      */
     private func handleTranscriptionResult(text: String, isFinal: Bool) {
         let g2TraceResultNs = DispatchTime.now().uptimeNanoseconds
+        G2LabDiagnostics.markTranscript(ns: g2TraceResultNs)
         Bridge.log("G2LAB_TRACE T3_SHERPA_RESULT ns=\(g2TraceResultNs) final=\(isFinal) chars=\(text.count) text=\(text.debugDescription)")
         // Forward to delegate if set. Measure main-queue handoff separately.
         DispatchQueue.main.async { [weak self] in
@@ -275,6 +506,7 @@ class SherpaOnnxTranscriber {
      */
     func acceptAudio(pcm16le: Data) {
         guard isRunning else {
+            G2LabDiagnostics.markError("PCM reached STT, but no recognizer is running")
             return
         }
 
@@ -290,6 +522,8 @@ class SherpaOnnxTranscriber {
             let g2TraceQueueNs = DispatchTime.now().uptimeNanoseconds
             let g2TraceSamples = pcm16le.count / MemoryLayout<Int16>.size
             let g2TraceAudioMs = Double(g2TraceSamples) * 1000.0 / Double(Self.SAMPLE_RATE)
+            self.lastQueuedAudioMs = g2TraceAudioMs
+            G2LabDiagnostics.markQueue(depth: self.pcmBuffers.count, audioMs: g2TraceAudioMs)
             Bridge.log("G2LAB_TRACE STT_QUEUE ns=\(g2TraceQueueNs) depthBefore=\(queueSizeBefore) depthAfter=\(self.pcmBuffers.count) bytes=\(pcm16le.count) audioMs=\(String(format: "%.2f", g2TraceAudioMs))")
 
             // Keep queue size manageable
@@ -335,6 +569,7 @@ class SherpaOnnxTranscriber {
 
             if let data = audioData {
                 let g2TraceDecodeStartNs = DispatchTime.now().uptimeNanoseconds
+                G2LabDiagnostics.markDecode(ns: g2TraceDecodeStartNs)
                 Bridge.log("G2LAB_TRACE STT_DECODE_START ns=\(g2TraceDecodeStartNs) bytes=\(data.count)")
                 // Synchronize access to recognizer to prevent race conditions
                 objc_sync_enter(self)
@@ -377,13 +612,18 @@ class SherpaOnnxTranscriber {
 
                         if partial != lastPartialResult, !partial.isEmpty {
                             let g2TracePartialNs = DispatchTime.now().uptimeNanoseconds
+                            let g2TraceDecodeMs = Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0
+                            G2LabDiagnostics.markPartial(ns: g2TracePartialNs, decodeMs: g2TraceDecodeMs, audioMs: self.lastQueuedAudioMs)
                             Bridge.log("G2LAB_TRACE FIRST_CHANGED_PARTIAL ns=\(g2TracePartialNs) decodeMs=\(String(format: "%.3f", Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0)) chars=\(partial.count)")
                             handleTranscriptionResult(text: partial, isFinal: false)
                             lastPartialResult = partial
                         }
                     }
                 } catch {
-                    Bridge.log("❌ Error processing audio: \(error.localizedDescription)")
+                    let message = error.localizedDescription
+                    Bridge.log("❌ Error processing audio: \(message)")
+                    G2LabDiagnostics.markModel(state: "failed", path: STTTools.modelPathForRecognizer() ?? "")
+                    G2LabDiagnostics.markError(message)
                     isRunning = false
                     STTTools.recoverFromRuntimeFailure(error.localizedDescription)
                     return
