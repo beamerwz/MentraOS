@@ -43,6 +43,8 @@ final class G2LabDiagnostics {
     private static var speechUtteranceCount: Int = 0
     private static var awaitingSpeechPartial = false
     private static var awaitingSpeechDisplay = false
+    private static var firstSpeechPartialEventMs: Double = -1
+    private static let maxValidSpeechLatencySampleMs: Double = 3_000
     private static var previousSpeechPartialMs: Double = -1
     private static var longestSpeechPartialGapMs: Double = -1
 
@@ -93,6 +95,7 @@ final class G2LabDiagnostics {
         speechUtteranceCount = 0
         awaitingSpeechPartial = false
         awaitingSpeechDisplay = false
+        firstSpeechPartialEventMs = -1
         previousSpeechPartialMs = -1
         longestSpeechPartialGapMs = -1
         lastError = ""
@@ -160,8 +163,23 @@ final class G2LabDiagnostics {
         previousPartialMs = t
 
         if awaitingSpeechPartial, lastSpeechOnsetMs >= 0, t >= lastSpeechOnsetMs {
-            speechToFirstPartialMs = t - lastSpeechOnsetMs
+            let delta = t - lastSpeechOnsetMs
             awaitingSpeechPartial = false
+
+            // A several-second "speech latency" sample is a false energy-onset
+            // association (room noise / TV / stale speech state), not a useful
+            // latency measurement. Only arm display timing after a plausible,
+            // matched first partial from the same detected speech run.
+            if delta <= maxValidSpeechLatencySampleMs {
+                speechToFirstPartialMs = delta
+                firstSpeechPartialEventMs = t
+                awaitingSpeechDisplay = true
+            } else {
+                speechToFirstPartialMs = -1
+                speechToDisplayMs = -1
+                firstSpeechPartialEventMs = -1
+                awaitingSpeechDisplay = false
+            }
         }
         if speechActive {
             if previousSpeechPartialMs >= 0 {
@@ -188,8 +206,14 @@ final class G2LabDiagnostics {
             speechActive = true
             lastSpeechOnsetMs = t
             speechUtteranceCount += 1
+
+            // Start a fresh, paired latency sample. Do not let values from a
+            // previous utterance coexist with a new run.
+            speechToFirstPartialMs = -1
+            speechToDisplayMs = -1
+            firstSpeechPartialEventMs = -1
             awaitingSpeechPartial = true
-            awaitingSpeechDisplay = true
+            awaitingSpeechDisplay = false
             previousSpeechPartialMs = -1
         } else if !active && speechActive {
             speechActive = false
@@ -257,8 +281,12 @@ final class G2LabDiagnostics {
         if lastTranscriptMs >= 0, t >= lastTranscriptMs, t - lastTranscriptMs < 10_000 {
             sttToDisplayMs = t - lastTranscriptMs
         }
-        if awaitingSpeechDisplay, lastSpeechOnsetMs >= 0,
-           t >= lastSpeechOnsetMs, t - lastSpeechOnsetMs < 10_000
+        if awaitingSpeechDisplay,
+           lastSpeechOnsetMs >= 0,
+           firstSpeechPartialEventMs >= 0,
+           lastTranscriptMs >= firstSpeechPartialEventMs,
+           t >= firstSpeechPartialEventMs,
+           t - firstSpeechPartialEventMs < 2_000
         {
             speechToDisplayMs = t - lastSpeechOnsetMs
             awaitingSpeechDisplay = false
