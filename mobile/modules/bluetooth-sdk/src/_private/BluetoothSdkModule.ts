@@ -240,6 +240,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   checkSttModelAvailable(): Promise<boolean>
   validateSttModel(path: string): Promise<boolean>
   extractTarBz2(sourcePath: string, destinationPath: string): Promise<boolean>
+  /** Persistent process-lifetime G2 LABS pipeline benchmark snapshot. */
+  getG2LabDiagnostics(): Record<string, unknown>
+  resetG2LabDiagnostics(): void
 
   // TTS Commands
   setTtsModelDetails(path: string, languageCode: string): Promise<void>
