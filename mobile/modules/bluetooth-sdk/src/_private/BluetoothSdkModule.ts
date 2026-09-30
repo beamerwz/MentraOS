@@ -243,6 +243,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   /** Persistent process-lifetime G2 LABS pipeline benchmark snapshot. */
   getG2LabDiagnostics(): Record<string, unknown>
   resetG2LabDiagnostics(): void
+  markG2LabDisplay(): void
 
   // TTS Commands
   setTtsModelDetails(path: string, languageCode: string): Promise<void>
