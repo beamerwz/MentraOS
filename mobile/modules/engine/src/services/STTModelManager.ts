@@ -140,6 +140,42 @@ class STTModelManager {
       languageCode: "it",
       experimental: true,
     },
+    nemotron_it_320: {
+      code: "nemotron_it_320",
+      displayName: "Nemotron 3.5 · 320 ms · BALANCED",
+      fileName: "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-320ms-int8-2026-06-11",
+      downloadUrl:
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-320ms-int8-2026-06-11.tar.bz2",
+      size: 682 * 1024 * 1024,
+      type: "transducer",
+      requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
+      languageCode: "it",
+      experimental: true,
+    },
+    nemotron_it_560: {
+      code: "nemotron_it_560",
+      displayName: "Nemotron 3.5 · 560 ms · ACCURACY",
+      fileName: "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11",
+      downloadUrl:
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-560ms-int8-2026-06-11.tar.bz2",
+      size: 682 * 1024 * 1024,
+      type: "transducer",
+      requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
+      languageCode: "it",
+      experimental: true,
+    },
+    nemotron_it_1120: {
+      code: "nemotron_it_1120",
+      displayName: "Nemotron 3.5 · 1120 ms · MAX CONTEXT",
+      fileName: "sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11",
+      downloadUrl:
+        "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11.tar.bz2",
+      size: 682 * 1024 * 1024,
+      type: "transducer",
+      requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
+      languageCode: "it",
+      experimental: true,
+    },
     zh: {
       code: "zh",
       displayName: "中文",

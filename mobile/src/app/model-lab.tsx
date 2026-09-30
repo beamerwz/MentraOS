@@ -1,5 +1,5 @@
 import {useEffect, useMemo, useState} from "react"
-import {ActivityIndicator, Pressable, ScrollView, Text as RNText, View} from "react-native"
+import {ActivityIndicator, Linking, Pressable, ScrollView, Text as RNText, View} from "react-native"
 import * as DocumentPicker from "expo-document-picker"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {router} from "expo-router"
@@ -301,6 +301,58 @@ export default function G2ModelLab() {
           title="Nemotron 3.5 · 160 ms ⚡ FAST"
           sub="Latency / accuracy balance"
         />
+
+        <RNText style={{color: "#b989ff", fontSize: 14, fontWeight: "800", marginTop: 8, marginBottom: 10}}>
+          CURATED DOWNLOADS · MULTILINGUAL NEMOTRON 3.5
+        </RNText>
+        <Card
+          code="nemotron_it_320"
+          title="Nemotron 3.5 · 320 ms · BALANCED"
+          sub="More context than 160 ms · compare accuracy vs latency"
+        />
+        <Card
+          code="nemotron_it_560"
+          title="Nemotron 3.5 · 560 ms · ACCURACY"
+          sub="Official Sherpa-ONNX multilingual export · stronger context"
+        />
+        <Card
+          code="nemotron_it_1120"
+          title="Nemotron 3.5 · 1120 ms · MAX CONTEXT"
+          sub="Maximum context variant · likely slower first text, useful accuracy benchmark"
+        />
+
+        <View
+          style={{
+            backgroundColor: "#100d16",
+            borderRadius: 18,
+            padding: 16,
+            marginBottom: 14,
+            borderWidth: 1,
+            borderColor: "#292032",
+          }}>
+          <RNText style={{color: "white", fontSize: 18, fontWeight: "800", marginBottom: 8}}>
+            MODEL SOURCES
+          </RNText>
+          <RNText style={{color: "#a99db8", marginBottom: 12}}>
+            Curated upstream sources for finding more compatible Sherpa models. Import stays validated before activation.
+          </RNText>
+          {[
+            ["Official Sherpa-ONNX ASR catalog", "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models"],
+            ["Nemotron 3.5 streaming exports", "https://github.com/k2-fsa/sherpa-onnx/tree/master/scripts/nemo/nemotron-3.5-asr-streaming-0.6b"],
+            ["Italian Kroko ONNX source", "https://huggingface.co/hudaiapa88/sherpa-stt-onnx/tree/main/it"],
+          ].map(([label, url]) => (
+            <Pressable
+              key={label}
+              onPress={() => void Linking.openURL(url)}
+              style={{
+                paddingVertical: 11,
+                borderTopWidth: 1,
+                borderTopColor: "#292032",
+              }}>
+              <RNText style={{color: "#b989ff", fontWeight: "700"}}>{label} ↗</RNText>
+            </Pressable>
+          ))}
+        </View>
 
         <Pressable
           onPress={() => void importCustom()}
