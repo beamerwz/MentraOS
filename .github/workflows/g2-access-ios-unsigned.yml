@@ -43,11 +43,18 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install repo miniapp workspace dependencies
+        env:
+          HUSKY: "0"
+        run: |
+          set -euo pipefail
+          bun install --no-frozen-lockfile
+
       - name: Install JavaScript dependencies
         working-directory: mobile
         run: |
           set -euo pipefail
-          # Root bun install already ran above to build the bundled Captions app.
+          # Root workspace dependencies are installed once above for the miniapp CLI.
           # mobile/preinstall.mjs would recursively run root bun install again and
           # can create a workspace symlink loop (ELOOP). Skip lifecycle scripts
           # for the install, then run the normal mobile postinstall explicitly.
