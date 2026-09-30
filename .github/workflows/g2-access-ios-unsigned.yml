@@ -43,30 +43,15 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install repo miniapp workspace dependencies
-        env:
-          HUSKY: "0"
-        run: |
-          set -euo pipefail
-          bun install --no-frozen-lockfile
-
-      - name: Install JavaScript dependencies
-        working-directory: mobile
-        run: |
-          set -euo pipefail
-          # Root workspace dependencies are installed once above for the miniapp CLI.
-          # mobile/preinstall.mjs would recursively run root bun install again and
-          # can create a workspace symlink loop (ELOOP). Skip lifecycle scripts
-          # for the install, then run the normal mobile postinstall explicitly.
-          bun install --no-frozen-lockfile --ignore-scripts
-          bun run postinstall
-
       - name: Build G2 LABS offline Captions bundle
         env:
           HUSKY: "0"
           MENTRA_PUBLIC_G2_LABS: "1"
         run: |
           set -euo pipefail
+          # Install the root workspace once. This provides the miniapp CLI and
+          # builds @mentra/miniapp, which the Captions pack consumes.
+          bun install --no-frozen-lockfile
           bun run build:miniapp
           (
             cd miniapps/captions
@@ -78,6 +63,15 @@ jobs:
           cp "$CAPTIONS_ZIP" mobile/assets/miniapps/com.mentra.captions-1.0.17.zip
           bun mobile/scripts/generate-bundled-miniapps.mjs
           ls -lh mobile/assets/miniapps/com.mentra.captions-1.0.17.zip
+
+      - name: Install JavaScript dependencies
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          # Root is already installed above. Skip mobile preinstall because it
+          # recursively calls "bun install" at root and creates the ELOOP.
+          bun install --no-frozen-lockfile --ignore-scripts
+          bun run postinstall
 
       - name: Configure development environment
         working-directory: mobile
