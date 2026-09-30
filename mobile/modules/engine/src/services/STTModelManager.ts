@@ -29,6 +29,27 @@ export interface DirectModelFile {
   url: string
 }
 
+export type ModelCompatibility = "native-likely" | "native-unverified" | "adapter-required"
+
+export interface RemoteCatalogModel {
+  id: string
+  displayName: string
+  source: string
+  sourceUrl: string
+  downloadUrl?: string
+  size?: number
+  languageCode: string
+  compatibility: ModelCompatibility
+  detail: string
+  tags: string[]
+}
+
+export interface ModelSourceLink {
+  name: string
+  url: string
+  detail: string
+}
+
 export interface LanguageConfig {
   code: string
   displayName: string
@@ -51,6 +72,94 @@ class STTModelManager {
   private downloadJobId?: number
   private currentLanguage = DEFAULT_LANGUAGE
   private modelBaseUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
+
+  private readonly modelSourceLinks: ModelSourceLink[] = [
+    {
+      name: "Sherpa-ONNX pretrained model catalog",
+      url: "https://k2-fsa.github.io/sherpa/onnx/pretrained_models/index.html",
+      detail: "Best first source for models that may fit the current native runtime.",
+    },
+    {
+      name: "Sherpa-ONNX ASR GitHub releases",
+      url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+      detail: "Direct .tar.bz2 packages; G2 LABS can browse this release feed in-app.",
+    },
+    {
+      name: "k2-fsa Sherpa models on Hugging Face",
+      url: "https://huggingface.co/k2-fsa/sherpa-onnx-models/tree/main/asr-models",
+      detail: "Large upstream archive of exported ONNX speech models.",
+    },
+    {
+      name: "Hugging Face Open ASR Leaderboard",
+      url: "https://huggingface.co/spaces/hf-audio/open_asr_leaderboard",
+      detail: "Accuracy / WER / speed comparisons for open ASR models.",
+    },
+    {
+      name: "Hugging Face ASR model browser",
+      url: "https://huggingface.co/models?pipeline_tag=automatic-speech-recognition&sort=trending",
+      detail: "Broad discovery feed; many entries need a runtime adapter before G2 LABS can execute them.",
+    },
+    {
+      name: "NVIDIA speech models on Hugging Face",
+      url: "https://huggingface.co/models?search=nvidia%20parakeet%20canary%20nemotron%20asr",
+      detail: "Parakeet, Canary and Nemotron families.",
+    },
+    {
+      name: "Qwen ASR models on Hugging Face",
+      url: "https://huggingface.co/models?search=Qwen3-ASR",
+      detail: "Qwen3-ASR family; Sherpa also publishes ONNX support for Qwen3-ASR.",
+    },
+    {
+      name: "whisper.cpp model catalog",
+      url: "https://github.com/ggml-org/whisper.cpp/tree/master/models",
+      detail: "iPhone-capable GGML/GGUF Whisper ecosystem; requires a whisper.cpp adapter.",
+    },
+    {
+      name: "faster-whisper / CTranslate2",
+      url: "https://github.com/SYSTRAN/faster-whisper",
+      detail: "Fast Whisper ecosystem; useful discovery source even though native iOS needs a separate adapter.",
+    },
+    {
+      name: "FunASR model zoo",
+      url: "https://github.com/modelscope/FunASR/blob/main/model_zoo/modelscope_models.md",
+      detail: "Streaming and offline ASR families including Paraformer / multilingual models.",
+    },
+    {
+      name: "ModelScope speech-recognition models",
+      url: "https://modelscope.cn/models?name=asr",
+      detail: "Another large model hub used heavily by FunASR.",
+    },
+    {
+      name: "Vosk model zoo",
+      url: "https://alphacephei.com/vosk/models",
+      detail: "Very lightweight offline baselines, including Italian.",
+    },
+    {
+      name: "SpeechBrain pretrained speech models",
+      url: "https://huggingface.co/speechbrain",
+      detail: "Research-quality ASR checkpoints and recipes; generally adapter-required.",
+    },
+    {
+      name: "Moonshine speech models",
+      url: "https://huggingface.co/models?search=moonshine%20speech%20recognition",
+      detail: "Small on-device-oriented ASR family worth benchmarking later.",
+    },
+    {
+      name: "Distil-Whisper models",
+      url: "https://huggingface.co/distil-whisper",
+      detail: "Compressed Whisper family for speed/quality comparisons.",
+    },
+    {
+      name: "Gladia open-source STT comparison",
+      url: "https://www.gladia.io/blog/best-open-source-speech-to-text-models",
+      detail: "Curated discovery article covering strong recent open ASR families.",
+    },
+    {
+      name: "Reddit community ASR discovery",
+      url: "https://www.reddit.com/search/?q=offline%20speech%20recognition%20model",
+      detail: "Community reports and new-model discoveries; never treated as a compatibility authority.",
+    },
+  ]
 
   private languages: Record<string, LanguageConfig> = {
     en: {
@@ -543,6 +652,210 @@ class STTModelManager {
     const activated = await BluetoothSdk.activateSttModel(modelPath, languageCode)
     if (!activated) throw new Error("Custom model failed its native recognizer smoke test")
     this.currentLanguage = "custom"
+  }
+
+  getModelSourceLinks(): ModelSourceLink[] {
+    return [...this.modelSourceLinks]
+  }
+
+  private inferLanguageCode(name: string): string {
+    const value = name.toLowerCase()
+    if (/(^|[-_.])it([-_.]|$)|italian/.test(value)) return "it-IT"
+    if (/(^|[-_.])fr([-_.]|$)|french/.test(value)) return "fr-FR"
+    if (/(^|[-_.])de([-_.]|$)|german/.test(value)) return "de-DE"
+    if (/(^|[-_.])es([-_.]|$)|spanish/.test(value)) return "es-ES"
+    if (/(^|[-_.])en([-_.]|$)|english/.test(value)) return "en-US"
+    if (/nemotron|multilingual|whisper|qwen|canary|parakeet/.test(value)) return "it"
+    return "it-IT"
+  }
+
+  private safeCatalogId(id: string): string {
+    const cleaned = id.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")
+    return cleaned.slice(0, 96) || "remote-model"
+  }
+
+  private async resolveValidModelPath(root: string, depth = 0): Promise<string | null> {
+    if (await BluetoothSdk.validateSttModel(root)) return root
+    if (depth >= 3 || !(await RNFS.exists(root))) return null
+
+    const entries = await RNFS.readDir(root)
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      const found = await this.resolveValidModelPath(entry.path, depth + 1)
+      if (found) return found
+    }
+    return null
+  }
+
+  private async fetchSherpaReleaseCatalog(query: string): Promise<RemoteCatalogModel[]> {
+    const response = await fetch(
+      "https://api.github.com/repos/k2-fsa/sherpa-onnx/releases/tags/asr-models",
+      {headers: {Accept: "application/vnd.github+json"}},
+    )
+    if (!response.ok) throw new Error(`Sherpa catalog HTTP ${response.status}`)
+    const release = (await response.json()) as {
+      assets?: Array<{name?: string; browser_download_url?: string; size?: number}>
+    }
+
+    const needle = query.trim().toLowerCase()
+    const assets = release.assets ?? []
+    return assets
+      .filter((asset) => {
+        const name = asset.name ?? ""
+        if (!name.endsWith(".tar.bz2")) return false
+        if (needle && !name.toLowerCase().includes(needle)) return false
+        return true
+      })
+      .slice(0, 80)
+      .map((asset) => {
+        const name = asset.name ?? "Sherpa model"
+        const lower = name.toLowerCase()
+        const likely =
+          lower.includes("streaming") ||
+          lower.includes("online") ||
+          lower.includes("nemotron") ||
+          lower.includes("kroko")
+        return {
+          id: `sherpa:${name}`,
+          displayName: name.replace(/\.tar\.bz2$/, ""),
+          source: "Sherpa-ONNX GitHub",
+          sourceUrl: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+          downloadUrl: asset.browser_download_url,
+          size: asset.size,
+          languageCode: this.inferLanguageCode(name),
+          compatibility: likely ? "native-likely" : "native-unverified",
+          detail: likely
+            ? "Official Sherpa archive · eligible for quarantine + native validation"
+            : "Official Sherpa archive · format will be validated before activation",
+          tags: ["sherpa-onnx", "tar.bz2", likely ? "streaming-candidate" : "unverified"],
+        } satisfies RemoteCatalogModel
+      })
+  }
+
+  private async fetchHuggingFaceCatalog(query: string): Promise<RemoteCatalogModel[]> {
+    const search = query.trim() || "speech recognition"
+    const response = await fetch(
+      `https://huggingface.co/api/models?pipeline_tag=automatic-speech-recognition&search=${encodeURIComponent(
+        search,
+      )}&sort=downloads&direction=-1&limit=40`,
+    )
+    if (!response.ok) throw new Error(`Hugging Face catalog HTTP ${response.status}`)
+    const models = (await response.json()) as Array<{
+      id?: string
+      tags?: string[]
+      downloads?: number
+    }>
+
+    return models.slice(0, 40).map((model) => {
+      const id = model.id ?? "unknown-model"
+      const tags = model.tags ?? []
+      const sherpaTagged = id.toLowerCase().includes("sherpa") || tags.some((tag) => tag.toLowerCase().includes("sherpa"))
+      return {
+        id: `hf:${id}`,
+        displayName: id,
+        source: "Hugging Face",
+        sourceUrl: `https://huggingface.co/${id}`,
+        languageCode: this.inferLanguageCode(id),
+        compatibility: sherpaTagged ? "native-unverified" : "adapter-required",
+        detail: sherpaTagged
+          ? "Sherpa-related repository · inspect files / package before activation"
+          : `Discovery only · runtime adapter may be required · ${model.downloads ?? 0} downloads`,
+        tags,
+      } satisfies RemoteCatalogModel
+    })
+  }
+
+  async browseRemoteModels(query = ""): Promise<RemoteCatalogModel[]> {
+    const [sherpa, huggingFace] = await Promise.allSettled([
+      this.fetchSherpaReleaseCatalog(query),
+      this.fetchHuggingFaceCatalog(query),
+    ])
+
+    const result: RemoteCatalogModel[] = []
+    if (sherpa.status === "fulfilled") result.push(...sherpa.value)
+    if (huggingFace.status === "fulfilled") result.push(...huggingFace.value)
+
+    if (result.length === 0) {
+      const reasons = [sherpa, huggingFace]
+        .filter((entry): entry is PromiseRejectedResult => entry.status === "rejected")
+        .map((entry) => String(entry.reason))
+        .join(" · ")
+      if (reasons) throw new Error(reasons)
+    }
+
+    return result
+  }
+
+  async downloadAndTestCatalogModel(
+    model: RemoteCatalogModel,
+    onProgress?: (progress: DownloadProgress) => void,
+  ): Promise<void> {
+    if (!model.downloadUrl) {
+      throw new Error("This source does not expose a directly testable Sherpa archive. Open its model page instead.")
+    }
+
+    const safeId = this.safeCatalogId(model.id)
+    const quarantineRoot = `${this.getModelDirectory()}/quarantine/${safeId}`
+    const tempPath = `${RNFS.TemporaryDirectoryPath}/g2labs-${safeId}.tar.bz2`
+
+    await RNFS.mkdir(`${this.getModelDirectory()}/quarantine`, {NSURLIsExcludedFromBackupKey: true})
+    if (await RNFS.exists(quarantineRoot)) await RNFS.unlink(quarantineRoot)
+    if (await RNFS.exists(tempPath)) await RNFS.unlink(tempPath)
+    await RNFS.mkdir(quarantineRoot, {NSURLIsExcludedFromBackupKey: true})
+
+    try {
+      const download = RNFS.downloadFile({
+        fromUrl: model.downloadUrl,
+        toFile: tempPath,
+        progressDivider: 2,
+        progress: (event: RNFS.DownloadProgressCallbackResultT) => {
+          const total = Math.max(event.contentLength, event.bytesWritten, 1)
+          onProgress?.({
+            jobId: event.jobId,
+            bytesWritten: event.bytesWritten,
+            contentLength: total,
+            percentage: Math.min(99, Math.round((event.bytesWritten / total) * 100)),
+          })
+        },
+        connectionTimeout: 30000,
+        readTimeout: 30000,
+      })
+      this.downloadJobId = download.jobId
+      const result = await download.promise
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        throw new Error(`Download failed with status ${result.statusCode}`)
+      }
+      this.downloadJobId = undefined
+      onProgress?.({
+        jobId: 0,
+        bytesWritten: model.size ?? 1,
+        contentLength: model.size ?? 1,
+        percentage: 100,
+      })
+
+      const extracted = await BluetoothSdk.extractTarBz2(tempPath, quarantineRoot)
+      if (!extracted) throw new Error("Archive extraction failed in quarantine")
+
+      const modelPath = await this.resolveValidModelPath(quarantineRoot)
+      if (!modelPath) {
+        throw new Error(
+          "QUARANTINED / REJECTED: archive does not match a supported online Sherpa layout (tokens + transducer or supported CTC).",
+        )
+      }
+
+      const activated = await BluetoothSdk.activateSttModel(modelPath, model.languageCode)
+      if (!activated) {
+        throw new Error(
+          "QUARANTINED: native smoke test failed. Last-known-good model remains the rollback target.",
+        )
+      }
+      this.currentLanguage = "custom"
+    } catch (error) {
+      this.downloadJobId = undefined
+      throw error
+    } finally {
+      await RNFS.unlink(tempPath).catch(() => undefined)
+    }
   }
 
   async cancelDownload(): Promise<void> {

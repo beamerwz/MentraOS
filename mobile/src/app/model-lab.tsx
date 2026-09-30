@@ -1,11 +1,12 @@
 import {useEffect, useMemo, useState} from "react"
-import {ActivityIndicator, Linking, Pressable, ScrollView, Text as RNText, View} from "react-native"
+import {ActivityIndicator, Linking, Pressable, ScrollView, Text as RNText, TextInput, View} from "react-native"
 import * as DocumentPicker from "expo-document-picker"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import {router} from "expo-router"
 
 import {Screen} from "@/components/ignite"
 import {sttModelManager as STT} from "@mentra/engine-host-internal"
+import type {RemoteCatalogModel} from "@mentra/engine-host-internal"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 
 // The unsigned G2 IPA workflow is mobile/**-triggered but rebuilds the Captions
@@ -106,6 +107,11 @@ export default function G2ModelLab() {
   const [progress, setProgress] = useState(0)
   const [status, setStatus] = useState("Ready")
   const [diagnostics, setDiagnostics] = useState<NativeDiagnostics>(EMPTY_DIAGNOSTICS)
+  const [browserQuery, setBrowserQuery] = useState("italian")
+  const [browserModels, setBrowserModels] = useState<RemoteCatalogModel[]>([])
+  const [browserLoading, setBrowserLoading] = useState(false)
+  const [browserError, setBrowserError] = useState("")
+  const sourceLinks = useMemo(() => STT.getModelSourceLinks(), [])
 
   const refreshDiagnostics = async () => {
     try {
@@ -224,6 +230,49 @@ export default function G2ModelLab() {
     }
   }
 
+  const searchModelBrowser = async () => {
+    try {
+      setBrowserLoading(true)
+      setBrowserError("")
+      const models = await STT.browseRemoteModels(browserQuery)
+      setBrowserModels(models)
+      if (models.length === 0) setBrowserError("No models matched this search.")
+    } catch (error: any) {
+      setBrowserError(error?.message ?? "Could not load model sources")
+    } finally {
+      setBrowserLoading(false)
+    }
+  }
+
+  const testRemoteModel = async (model: RemoteCatalogModel) => {
+    if (!model.downloadUrl) {
+      await Linking.openURL(model.sourceUrl)
+      return
+    }
+
+    try {
+      setBusy(`remote:${model.id}`)
+      setProgress(0)
+      setStatus(`QUARANTINE · downloading ${model.displayName}`)
+      await STT.downloadAndTestCatalogModel(model, (p) => setProgress(p.percentage))
+      setCurrent("custom")
+      const snapshot = await refreshDiagnostics()
+      if (snapshot?.modelState === "staged-relaunch") {
+        setStatus(`SAFE TEST STAGED · ${model.displayName} · fully close/reopen once`)
+      } else if (snapshot?.modelState === "ready") {
+        setStatus(`REMOTE MODEL LIVE · ${model.displayName}`)
+      } else {
+        setStatus(`Model validated and staged · ${model.displayName}`)
+      }
+    } catch (error: any) {
+      setStatus(error?.message ?? "Remote model test failed safely")
+      await refreshDiagnostics()
+    } finally {
+      setBusy(null)
+      setProgress(0)
+    }
+  }
+
   const resetBenchmark = async () => {
     try {
       await Promise.resolve(BluetoothSdk.resetG2LabDiagnostics())
@@ -330,26 +379,136 @@ export default function G2ModelLab() {
             borderWidth: 1,
             borderColor: "#292032",
           }}>
+          <RNText style={{color: "white", fontSize: 20, fontWeight: "800"}}>
+            MODEL BROWSER
+          </RNText>
+          <RNText style={{color: "#a99db8", marginTop: 6, marginBottom: 12}}>
+            Live Sherpa GitHub + Hugging Face discovery. Official Sherpa archives can be downloaded into quarantine and tested.
+          </RNText>
+
+          <TextInput
+            value={browserQuery}
+            onChangeText={setBrowserQuery}
+            placeholder="Search: italian, streaming, parakeet, nemotron…"
+            placeholderTextColor="#6f637c"
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={{
+              color: "white",
+              backgroundColor: "#17121e",
+              borderWidth: 1,
+              borderColor: "#392b49",
+              borderRadius: 14,
+              paddingHorizontal: 14,
+              paddingVertical: 12,
+            }}
+          />
+          <Pressable
+            onPress={() => void searchModelBrowser()}
+            disabled={browserLoading || !!busy}
+            style={{
+              backgroundColor: "#6d35a8",
+              borderRadius: 14,
+              padding: 13,
+              marginTop: 10,
+              alignItems: "center",
+            }}>
+            <RNText style={{color: "white", fontWeight: "800"}}>
+              {browserLoading ? "SEARCHING SOURCES…" : "SEARCH ALL SOURCES"}
+            </RNText>
+          </Pressable>
+
+          {!!browserError && (
+            <RNText style={{color: "#ff829b", marginTop: 10, fontSize: 12}}>{browserError}</RNText>
+          )}
+
+          {browserModels.slice(0, 30).map((model) => {
+            const direct = !!model.downloadUrl
+            const badge =
+              model.compatibility === "native-likely"
+                ? "🟢 LIKELY NATIVE"
+                : model.compatibility === "native-unverified"
+                  ? "🟡 QUARANTINE TEST"
+                  : "⚪ ADAPTER REQUIRED"
+
+            return (
+              <View
+                key={model.id}
+                style={{
+                  marginTop: 12,
+                  paddingTop: 12,
+                  borderTopWidth: 1,
+                  borderTopColor: "#292032",
+                }}>
+                <RNText style={{color: "white", fontWeight: "800"}}>{model.displayName}</RNText>
+                <RNText style={{color: "#8f7fa3", marginTop: 3, fontSize: 12}}>
+                  {model.source} · {badge}
+                  {typeof model.size === "number" ? ` · ${STT.formatBytes(model.size)}` : ""}
+                </RNText>
+                <RNText style={{color: "#a99db8", marginTop: 5, fontSize: 12}}>{model.detail}</RNText>
+                <View style={{flexDirection: "row", gap: 8, marginTop: 9}}>
+                  <Pressable
+                    onPress={() => void testRemoteModel(model)}
+                    disabled={!!busy}
+                    style={{
+                      flex: 1,
+                      backgroundColor: direct ? "#6d35a8" : "#21182b",
+                      borderRadius: 11,
+                      padding: 10,
+                      alignItems: "center",
+                    }}>
+                    <RNText style={{color: "white", fontWeight: "800", fontSize: 12}}>
+                      {busy === `remote:${model.id}`
+                        ? progress > 0
+                          ? `DOWNLOADING ${progress}%`
+                          : "PREPARING…"
+                        : direct
+                          ? "DOWNLOAD & TEST"
+                          : "OPEN MODEL"}
+                    </RNText>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void Linking.openURL(model.sourceUrl)}
+                    style={{
+                      backgroundColor: "#21182b",
+                      borderRadius: 11,
+                      padding: 10,
+                      alignItems: "center",
+                    }}>
+                    <RNText style={{color: "#c8a6ff", fontWeight: "800", fontSize: 12}}>SOURCE ↗</RNText>
+                  </Pressable>
+                </View>
+              </View>
+            )
+          })}
+        </View>
+
+        <View
+          style={{
+            backgroundColor: "#100d16",
+            borderRadius: 18,
+            padding: 16,
+            marginBottom: 14,
+            borderWidth: 1,
+            borderColor: "#292032",
+          }}>
           <RNText style={{color: "white", fontSize: 18, fontWeight: "800", marginBottom: 8}}>
-            MODEL SOURCES
+            DISCOVERY SOURCES
           </RNText>
-          <RNText style={{color: "#a99db8", marginBottom: 12}}>
-            Curated upstream sources for finding more compatible Sherpa models. Import stays validated before activation.
+          <RNText style={{color: "#a99db8", marginBottom: 10}}>
+            Broad model ecosystems and comparison feeds. Non-Sherpa families stay discovery-only until a runtime adapter exists.
           </RNText>
-          {[
-            ["Official Sherpa-ONNX ASR catalog", "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models"],
-            ["Nemotron 3.5 streaming exports", "https://github.com/k2-fsa/sherpa-onnx/tree/master/scripts/nemo/nemotron-3.5-asr-streaming-0.6b"],
-            ["Italian Kroko ONNX source", "https://huggingface.co/hudaiapa88/sherpa-stt-onnx/tree/main/it"],
-          ].map(([label, url]) => (
+          {sourceLinks.map((source) => (
             <Pressable
-              key={label}
-              onPress={() => void Linking.openURL(url)}
+              key={source.url}
+              onPress={() => void Linking.openURL(source.url)}
               style={{
                 paddingVertical: 11,
                 borderTopWidth: 1,
                 borderTopColor: "#292032",
               }}>
-              <RNText style={{color: "#b989ff", fontWeight: "700"}}>{label} ↗</RNText>
+              <RNText style={{color: "#b989ff", fontWeight: "700"}}>{source.name} ↗</RNText>
+              <RNText style={{color: "#766985", fontSize: 11, marginTop: 3}}>{source.detail}</RNText>
             </Pressable>
           ))}
         </View>
