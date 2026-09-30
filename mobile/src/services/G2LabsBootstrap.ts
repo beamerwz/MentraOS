@@ -3,7 +3,7 @@ import {engine} from "@mentra/engine"
 import {appRegistry, offlineSpeechModelService} from "@mentra/engine-host-internal"
 
 const CAPTIONS_PACKAGE = "com.mentra.captions"
-const CAPTIONS_BUNDLE = require("@assets/miniapps/com.mentra.captions-1.0.16.zip")
+const CAPTIONS_VERSION = "1.0.17"\nconst CAPTIONS_BUNDLE = require("@assets/miniapps/com.mentra.captions-1.0.17.zip")
 
 /**
  * Install the proven Captions bundle shipped inside the IPA without contacting
@@ -11,7 +11,7 @@ const CAPTIONS_BUNDLE = require("@assets/miniapps/com.mentra.captions-1.0.16.zip
  */
 async function ensureBundledCaptionsInstalled(): Promise<void> {
   const installed = appRegistry.getInstalledVersions(CAPTIONS_PACKAGE)
-  if (installed.includes("1.0.16")) {
+  if (installed.includes(CAPTIONS_VERSION)) {
     console.log("G2LABS_CAPTIONS bundled captions already installed")
     await engine.miniapps.refresh()
     return
@@ -24,7 +24,7 @@ async function ensureBundledCaptionsInstalled(): Promise<void> {
   if (!uri) throw new Error("Bundled Captions asset has no local URI")
 
   const result = await appRegistry.installFromLocalZip(uri, {
-    releaseIdentity: {source: "bundled_asset", releaseId: "g2-labs-captions-1.0.16"},
+    releaseIdentity: {source: "bundled_asset", releaseId: `g2-labs-captions-${CAPTIONS_VERSION}`},
   })
   if (result.is_error()) throw result.error
 
