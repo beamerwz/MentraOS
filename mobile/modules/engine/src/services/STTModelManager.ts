@@ -900,11 +900,14 @@ class STTModelManager {
         const bundle = standalone
           ? [standalone]
           : files
-              .filter((entry) => /\.(onnx|json|txt|yaml|yml|model|tiktoken)$/i.test(entry.name))
-              .slice(0, 24)
+              .filter((entry) =>
+                /\.(onnx|json|txt|yaml|yml|model|tiktoken|safetensors|bin|pt|pth)$/i.test(entry.name),
+              )
+              .filter((entry) => !/(optimizer|training_args|scheduler|rng_state)/i.test(entry.name))
+              .slice(0, 32)
         if (bundle.length > 0) {
           storeFiles = bundle.map((entry) => ({
-            fileName: entry.name.split("/").pop() ?? entry.name,
+            fileName: standalone ? entry.name.split("/").pop() ?? entry.name : entry.name,
             url: this.hfFileUrl(id, entry.name),
             size: entry.size,
           }))
@@ -1054,6 +1057,10 @@ class STTModelManager {
 
     for (const file of files) {
       const target = `${destination}/${file.fileName}`
+      const slash = target.lastIndexOf("/")
+      if (slash > 0) {
+        await RNFS.mkdir(target.slice(0, slash), {NSURLIsExcludedFromBackupKey: true})
+      }
       const transfer = RNFS.downloadFile({
         fromUrl: file.url,
         toFile: target,
