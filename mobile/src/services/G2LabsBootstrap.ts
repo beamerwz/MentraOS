@@ -3,7 +3,8 @@ import {engine} from "@mentra/engine"
 import {appRegistry, offlineSpeechModelService} from "@mentra/engine-host-internal"
 
 const CAPTIONS_PACKAGE = "com.mentra.captions"
-const CAPTIONS_VERSION = "1.0.17"\nconst CAPTIONS_BUNDLE = require("@assets/miniapps/com.mentra.captions-1.0.17.zip")
+const CAPTIONS_VERSION = "1.0.17"
+const CAPTIONS_BUNDLE = require("@assets/miniapps/com.mentra.captions-1.0.17.zip")
 
 /**
  * Install the proven Captions bundle shipped inside the IPA without contacting
