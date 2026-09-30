@@ -1641,6 +1641,10 @@ class LocalMiniappRuntime {
     let requestedLocationRate: string | null = null
     const forceLocalTranscriptionStreams = new Set<string>()
     const cloudTranscriptionStreams = new Set<string>()
+    // G2 LABS ships Captions as an account-free local miniapp. Never let its
+    // transcription subscription silently depend on cloud auth/connectivity.
+    // Other miniapps retain the normal cloud/forceLocal routing semantics.
+    const forceBundledCaptionsLocal = packageName === "com.mentra.captions"
     const streams = rawStreams?.map((s) => {
       if (typeof s === "object" && s !== null) {
         if (s.stream === "location_stream") {
@@ -1649,15 +1653,20 @@ class LocalMiniappRuntime {
           }
           return "location_update"
         }
-        if (s.forceLocal === true && s.stream.startsWith("transcription:")) {
-          forceLocalTranscriptionStreams.add(s.stream)
-        }
-        if (s.stream.startsWith("transcription:") && (s.forceLocal !== true || s.includeCloud === true)) {
-          cloudTranscriptionStreams.add(s.stream)
+        if (s.stream.startsWith("transcription:")) {
+          if (s.forceLocal === true || forceBundledCaptionsLocal) {
+            forceLocalTranscriptionStreams.add(s.stream)
+          }
+          if ((!forceBundledCaptionsLocal && s.forceLocal !== true) || s.includeCloud === true) {
+            cloudTranscriptionStreams.add(s.stream)
+          }
         }
         return s.stream
       }
-      if (s.startsWith("transcription:")) cloudTranscriptionStreams.add(s)
+      if (s.startsWith("transcription:")) {
+        if (forceBundledCaptionsLocal) forceLocalTranscriptionStreams.add(s)
+        else cloudTranscriptionStreams.add(s)
+      }
       return s
     }) as string[] | undefined
     if (!Array.isArray(streams)) {
@@ -1668,7 +1677,9 @@ class LocalMiniappRuntime {
       return
     }
 
-    console.log(`${LOG_TAG}: SUBSCRIBE from ${packageName}: [${streams.join(", ")}]`)
+    console.log(
+      `${LOG_TAG}: SUBSCRIBE from ${packageName}: [${streams.join(", ")}] forceLocalCaptions=${forceBundledCaptionsLocal}`,
+    )
 
     // Gate each stream on the permission type its data requires. The manifest
     // must declare the permission (miniapp.json -> permissions) or we reject
