@@ -22,6 +22,10 @@ final class G2LabDiagnostics {
     private static var partialTimesMs: [Double] = []
     private static var decodeRtf: Double = -1
     private static var decodePasses: Int = 0
+    private static var endpointCount: Int = 0
+    private static var queueDropCount: Int = 0
+    private static var longestPartialGapMs: Double = -1
+    private static var lastEndpointMs: Double = -1
     private static var audioBacklogMs: Double = -1
     private static var sttToDisplayMs: Double = -1
 
@@ -54,6 +58,10 @@ final class G2LabDiagnostics {
         partialTimesMs.removeAll(keepingCapacity: true)
         decodeRtf = -1
         decodePasses = 0
+        endpointCount = 0
+        queueDropCount = 0
+        longestPartialGapMs = -1
+        lastEndpointMs = -1
         audioBacklogMs = -1
         sttToDisplayMs = -1
         lastError = ""
@@ -116,6 +124,7 @@ final class G2LabDiagnostics {
         }
         if previousPartialMs >= 0 {
             partialIntervalMs = max(0, t - previousPartialMs)
+            longestPartialGapMs = max(longestPartialGapMs, partialIntervalMs)
         }
         previousPartialMs = t
         partialTimesMs.append(t)
@@ -123,6 +132,19 @@ final class G2LabDiagnostics {
         if audioMs > 0 {
             decodeRtf = max(0, decodeMs / audioMs)
         }
+        lock.unlock()
+    }
+
+    static func markEndpoint(ns: UInt64) {
+        lock.lock()
+        endpointCount += 1
+        lastEndpointMs = nowMs(ns)
+        lock.unlock()
+    }
+
+    static func markQueueDrop() {
+        lock.lock()
+        queueDropCount += 1
         lock.unlock()
     }
 
@@ -173,6 +195,10 @@ final class G2LabDiagnostics {
             "changedPartialsPerSec": Double(recentOneSecond),
             "decodeRtf": decodeRtf,
             "decodePasses": decodePasses,
+            "endpointCount": endpointCount,
+            "queueDropCount": queueDropCount,
+            "longestPartialGapMs": longestPartialGapMs,
+            "lastEndpointAgeMs": age(lastEndpointMs, now: now),
             "audioBacklogMs": audioBacklogMs,
             "sttToDisplayMs": sttToDisplayMs,
         ]
@@ -359,9 +385,11 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                         featConfig: featureConfig,
                         modelConfig: modelConfig,
                         enableEndpoint: true,
-                        rule1MinTrailingSilence: 1.2,
-                        rule2MinTrailingSilence: 0.8,
-                        rule3MinUtteranceLength: 10.0
+                        // Continuous-caption tuning: keep partials streaming immediately,
+                        // but do not reset decoder state on every short conversational pause.
+                        rule1MinTrailingSilence: 2.4,
+                        rule2MinTrailingSilence: 1.2,
+                        rule3MinUtteranceLength: 20.0
                     )
 
                     // The first native recognizer construction owns ORT for this process.
@@ -413,9 +441,11 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                         featConfig: featureConfig,
                         modelConfig: modelConfig,
                         enableEndpoint: true,
-                        rule1MinTrailingSilence: 1.2,
-                        rule2MinTrailingSilence: 0.8,
-                        rule3MinUtteranceLength: 10.0
+                        // Continuous-caption tuning: keep partials streaming immediately,
+                        // but do not reset decoder state on every short conversational pause.
+                        rule1MinTrailingSilence: 2.4,
+                        rule2MinTrailingSilence: 1.2,
+                        rule3MinUtteranceLength: 20.0
                     )
 
                     // The first native recognizer construction owns ORT for this process.
@@ -531,6 +561,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
             // Keep queue size manageable
             if self.pcmBuffers.count > Self.QUEUE_CAPACITY {
                 let removedBuffer = self.pcmBuffers.removeFirst()
+                G2LabDiagnostics.markQueueDrop()
                 Bridge.log("⚠️ Audio queue overflow - dropped buffer of \(removedBuffer.count) bytes")
             }
         }
@@ -609,8 +640,11 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
 
                     // If utterance endpoint detected
                     if recognizer.isEndpoint() {
+                        let endpointNs = DispatchTime.now().uptimeNanoseconds
+                        G2LabDiagnostics.markEndpoint(ns: endpointNs)
                         let result = recognizer.getResult()
                         let finalText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        Bridge.log("G2LAB_TRACE ENDPOINT ns=\(endpointNs) finalChars=\(finalText.count)")
 
                         if !finalText.isEmpty {
                             handleTranscriptionResult(text: finalText, isFinal: true)
