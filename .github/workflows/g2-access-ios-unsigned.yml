@@ -7,6 +7,7 @@ on:
       - g2-labs-latency-trace
       - g2-labs-phase1
       - g2-labs-next-background-captions
+      - g2-labs-latency-lab
     paths:
       - "mobile/**"
       - ".github/workflows/g2-access-ios-unsigned.yml"
