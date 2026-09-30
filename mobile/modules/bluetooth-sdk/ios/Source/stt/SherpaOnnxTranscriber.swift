@@ -199,9 +199,6 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
 
     private var lastPartialResult = ""
 
-    /// Parent context
-    private weak var context: UIViewController?
-
     /// Session start time for relative timestamps
     private var transcriptionSessionStart: Date
 
@@ -274,10 +271,11 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
     }
 
     /**
-     * Constructor that accepts a UIViewController to load model assets.
+     * The recognizer loads models from filesystem paths and does not require
+     * UIKit state. Keep construction independent of the app's root view so
+     * early DeviceManager startup can never leave local STT permanently nil.
      */
-    init(context: UIViewController) {
-        self.context = context
+    init() {
         transcriptionSessionStart = Date()
     }
 
