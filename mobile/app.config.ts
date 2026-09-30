@@ -290,9 +290,13 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         "expo-splash-screen",
         isG2AccessBuild
           ? {
+              image: "./assets/g2labs/icon.png",
+              resizeMode: "contain",
+              imageWidth: 180,
               backgroundColor: "#050208",
               dark: {
                 backgroundColor: "#050208",
+                image: "./assets/g2labs/icon.png",
               },
             }
           : {
