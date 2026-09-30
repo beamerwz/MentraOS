@@ -1,106 +1,121 @@
-import {Platform, View} from "react-native"
-import {ScrollView} from "react-native-gesture-handler"
+import * as Application from "expo-application"
+import {Pressable, ScrollView, Text as RNText, View} from "react-native"
 
-import {VersionInfo} from "@/components/dev/VersionInfo"
 import {Icon, Screen} from "@/components/ignite"
 import {DeviceSettingsSection} from "@/components/settings/DeviceSettingsSection"
-import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
-import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {translate} from "@/i18n"
-import {SETTINGS, useSetting} from "@mentra/engine"
-import {useRef} from "react"
-import {useRegisterCapsule} from "@/stores/capsule"
+
+const PURPLE = "#A855F7"
 
 export default function MainSettingsPage() {
   const {theme} = useAppTheme()
-  const {push} = useNavigationStore.getState()
-  const [debugMode] = useSetting(SETTINGS.debug_mode.key)
-  const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const [appearanceMenuEnabled] = useSetting(SETTINGS.appearance_menu_enabled.key)
-  const viewShotRef = useRef<View>(null)
-
-  useRegisterCapsule({
-    packageName: "com.mentra.settings",
-    viewShotRef,
-    visibleOnRoutes: ["/miniapps/settings/"],
-    offsetRight: theme.spacing.s2,
-  })
+  const {goBack, push} = useNavigationStore.getState()
+  const version = Application.nativeApplicationVersion || "3.1.3"
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["top"]} ref={viewShotRef} className="px-0">
-      <ScrollView className="pt-8 px-6" contentInsetAdjustmentBehavior="automatic">
-        <View style={{flex: 1, gap: theme.spacing.s6}}>
-          <Group title={translate("account:accountSettings")}>
-            <RouteButton
-              icon={<Icon name="circle-user" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("settings:profileSettings")}
-              onPress={() => push("/miniapps/settings/profile")}
-            />
-            <RouteButton
-              icon={<Icon name="message-2-star" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("settings:feedback")}
-              onPress={() =>
-                push("/miniapps/settings/feedback", {
-                  triggerSource: "settings",
-                  sourceRoute: "/miniapps/settings/",
-                })
-              }
-            />
-          </Group>
+    <Screen
+      preset="fixed"
+      safeAreaEdges={["top"]}
+      backgroundColor="#050208"
+      className="px-0"
+      statusBarStyle="light">
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{paddingHorizontal: 22, paddingTop: 10, paddingBottom: 64}}>
+        <View style={{flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 28}}>
+          <Pressable
+            onPress={goBack}
+            style={{
+              width: 42,
+              height: 42,
+              borderRadius: 14,
+              borderWidth: 1,
+              borderColor: "#2D2039",
+              backgroundColor: "#120D19",
+              alignItems: "center",
+              justifyContent: "center",
+            }}>
+            <Icon name="chevron-left" size={22} color="#C4B5FD" />
+          </Pressable>
 
-          {/* Device/glasses settings, flattened inline (previously a separate page) */}
-          <DeviceSettingsSection />
+          <View style={{flex: 1, marginLeft: 14}}>
+            <RNText style={{color: "white", fontSize: 28, fontWeight: "900"}}>G2 Settings</RNText>
+            <RNText style={{color: "#7F708C", marginTop: 3, fontSize: 12}}>G2 Glasses · v{version}</RNText>
+          </View>
 
-          <Group title={translate("account:appSettings")}>
-            {appearanceMenuEnabled && (
-              <RouteButton
-                icon={<Icon name="sun" size={24} color={theme.colors.secondary_foreground} />}
-                label={translate("settings:appAppearance")}
-                onPress={() => push("/miniapps/settings/appearance")}
-              />
-            )}
-            {(Platform.OS === "android" || superMode) && (
-              <RouteButton
-                icon={<Icon name="bell" size={24} color={theme.colors.secondary_foreground} />}
-                label={translate("settings:notificationsSettings")}
-                onPress={() => push("/miniapps/settings/notifications")}
-              />
-            )}
-            {/* Microphone lives in the device section above (it's a glasses mic selector) */}
-            <RouteButton
-              icon={<Icon name="volume" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("settings:speechSettings")}
-              onPress={() => push("/miniapps/settings/speech")}
-            />
-            <RouteButton
-              icon={<Icon name="shield-lock" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("settings:privacySettings")}
-              onPress={() => push("/miniapps/settings/privacy")}
-            />
-          </Group>
-
-          <Group title={translate("deviceSettings:advancedSettings")}>
-            {debugMode && (
-              <RouteButton
-                icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
-                label={translate("settings:debugSettings")}
-                onPress={() => push("/miniapps/settings/debug")}
-                onLongPress={() => superMode && push("/miniapps/settings/super")}
-              />
-            )}
-            <RouteButton
-              icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
-              label={translate("settings:miniappDeveloperSettings")}
-              onPress={() => push("/miniapps/settings/miniapp-dev")}
-            />
-          </Group>
+          <View
+            style={{
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: "#3B2850",
+              backgroundColor: "#120D19",
+            }}>
+            <RNText style={{color: "#B989FF", fontSize: 11, fontWeight: "800"}}>G2 LABS</RNText>
+          </View>
         </View>
 
-        <VersionInfo />
-        <Spacer height={theme.spacing.s10} />
+        <View
+          style={{
+            borderRadius: 24,
+            borderWidth: 1,
+            borderColor: "#2D2039",
+            backgroundColor: "#0F0B14",
+            padding: 16,
+            marginBottom: 24,
+          }}>
+          <RNText style={{color: "#8F7FA3", fontSize: 11, fontWeight: "900", letterSpacing: 1.3, marginBottom: 12}}>
+            GLASSES
+          </RNText>
+          <DeviceSettingsSection />
+        </View>
+
+        <View
+          style={{
+            borderRadius: 24,
+            borderWidth: 1,
+            borderColor: "#2D2039",
+            backgroundColor: "#0F0B14",
+            padding: 14,
+          }}>
+          <RNText style={{color: "#8F7FA3", fontSize: 11, fontWeight: "900", letterSpacing: 1.3, margin: 4, marginBottom: 10}}>
+            G2 GLASSES APP
+          </RNText>
+
+          <RouteButton
+            icon={<Icon name="volume" size={24} color={theme.colors.secondary_foreground} />}
+            label="Speech"
+            onPress={() => push("/miniapps/settings/speech")}
+          />
+          <RouteButton
+            icon={<Icon name="shield-lock" size={24} color={theme.colors.secondary_foreground} />}
+            label="Privacy"
+            onPress={() => push("/miniapps/settings/privacy")}
+          />
+        </View>
+
+        <View
+          style={{
+            marginTop: 24,
+            borderRadius: 18,
+            borderWidth: 1,
+            borderColor: "#382348",
+            backgroundColor: "#120A19",
+            padding: 16,
+          }}>
+          <RNText style={{color: "#B989FF", fontSize: 12, fontWeight: "800"}}>G2 LABS DARK PURPLE</RNText>
+          <RNText style={{color: "#7F708C", marginTop: 5, fontSize: 12}}>
+            Connection, microphone, display and device controls stay on the proven G2 runtime.
+          </RNText>
+        </View>
+
+        <RNText style={{color: "#4E4358", textAlign: "center", marginTop: 34, fontSize: 10, letterSpacing: 1.2}}>
+          G2 Glasses · v{version}
+        </RNText>
       </ScrollView>
     </Screen>
   )
