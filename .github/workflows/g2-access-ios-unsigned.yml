@@ -68,10 +68,10 @@ jobs:
         working-directory: mobile
         run: |
           set -euo pipefail
-          # Root is already installed above. Skip mobile preinstall because it
-          # recursively calls "bun install" at root and creates the ELOOP.
-          bun install --no-frozen-lockfile --ignore-scripts
-          bun run postinstall
+          # G2_ACCESS_BUILD makes mobile/preinstall skip only the redundant
+          # root-workspace recursion. Keep lifecycle scripts enabled so native
+          # dependencies such as React Native Skia install their prebuilts.
+          bun install --no-frozen-lockfile
 
       - name: Configure development environment
         working-directory: mobile
