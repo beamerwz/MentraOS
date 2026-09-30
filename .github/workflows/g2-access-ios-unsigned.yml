@@ -45,7 +45,14 @@ jobs:
 
       - name: Install JavaScript dependencies
         working-directory: mobile
-        run: bun install --no-frozen-lockfile
+        run: |
+          set -euo pipefail
+          # Root bun install already ran above to build the bundled Captions app.
+          # mobile/preinstall.mjs would recursively run root bun install again and
+          # can create a workspace symlink loop (ELOOP). Skip lifecycle scripts
+          # for the install, then run the normal mobile postinstall explicitly.
+          bun install --no-frozen-lockfile --ignore-scripts
+          bun run postinstall
 
       - name: Build G2 LABS offline Captions bundle
         env:
