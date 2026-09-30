@@ -34,6 +34,18 @@ final class G2LabDiagnostics {
     private static var audioBacklogMs: Double = -1
     private static var sttToDisplayMs: Double = -1
 
+    // Speech-onset-aware latency. Unlike firstIngestMs, these exclude idle
+    // silence before somebody actually starts speaking.
+    private static var speechActive = false
+    private static var lastSpeechOnsetMs: Double = -1
+    private static var speechToFirstPartialMs: Double = -1
+    private static var speechToDisplayMs: Double = -1
+    private static var speechUtteranceCount: Int = 0
+    private static var awaitingSpeechPartial = false
+    private static var awaitingSpeechDisplay = false
+    private static var previousSpeechPartialMs: Double = -1
+    private static var longestSpeechPartialGapMs: Double = -1
+
     private static var modelState = "no-model"
     private static var modelPath = ""
     private static var lastError = ""
@@ -74,6 +86,15 @@ final class G2LabDiagnostics {
         lastEndpointMs = -1
         audioBacklogMs = -1
         sttToDisplayMs = -1
+        speechActive = false
+        lastSpeechOnsetMs = -1
+        speechToFirstPartialMs = -1
+        speechToDisplayMs = -1
+        speechUtteranceCount = 0
+        awaitingSpeechPartial = false
+        awaitingSpeechDisplay = false
+        previousSpeechPartialMs = -1
+        longestSpeechPartialGapMs = -1
         lastError = ""
     }
 
@@ -137,10 +158,42 @@ final class G2LabDiagnostics {
             longestPartialGapMs = max(longestPartialGapMs, partialIntervalMs)
         }
         previousPartialMs = t
+
+        if awaitingSpeechPartial, lastSpeechOnsetMs >= 0, t >= lastSpeechOnsetMs {
+            speechToFirstPartialMs = t - lastSpeechOnsetMs
+            awaitingSpeechPartial = false
+        }
+        if speechActive {
+            if previousSpeechPartialMs >= 0 {
+                longestSpeechPartialGapMs = max(
+                    longestSpeechPartialGapMs,
+                    t - previousSpeechPartialMs
+                )
+            }
+            previousSpeechPartialMs = t
+        }
+
         partialTimesMs.append(t)
         partialTimesMs.removeAll { $0 < t - 5_000 }
         if audioMs > 0 {
             decodeRtf = max(0, decodeMs / audioMs)
+        }
+        lock.unlock()
+    }
+
+    static func markSpeechState(active: Bool, ns: UInt64) {
+        let t = nowMs(ns)
+        lock.lock()
+        if active && !speechActive {
+            speechActive = true
+            lastSpeechOnsetMs = t
+            speechUtteranceCount += 1
+            awaitingSpeechPartial = true
+            awaitingSpeechDisplay = true
+            previousSpeechPartialMs = -1
+        } else if !active && speechActive {
+            speechActive = false
+            previousSpeechPartialMs = -1
         }
         lock.unlock()
     }
@@ -204,6 +257,12 @@ final class G2LabDiagnostics {
         if lastTranscriptMs >= 0, t >= lastTranscriptMs, t - lastTranscriptMs < 10_000 {
             sttToDisplayMs = t - lastTranscriptMs
         }
+        if awaitingSpeechDisplay, lastSpeechOnsetMs >= 0,
+           t >= lastSpeechOnsetMs, t - lastSpeechOnsetMs < 10_000
+        {
+            speechToDisplayMs = t - lastSpeechOnsetMs
+            awaitingSpeechDisplay = false
+        }
         lock.unlock()
     }
 
@@ -243,6 +302,11 @@ final class G2LabDiagnostics {
             "lastEndpointAgeMs": age(lastEndpointMs, now: now),
             "audioBacklogMs": audioBacklogMs,
             "sttToDisplayMs": sttToDisplayMs,
+            "speechActive": speechActive,
+            "speechUtteranceCount": speechUtteranceCount,
+            "speechToFirstPartialMs": speechToFirstPartialMs,
+            "speechToDisplayMs": speechToDisplayMs,
+            "longestSpeechPartialGapMs": longestSpeechPartialGapMs,
         ]
     }
 }
@@ -268,6 +332,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
     private static let MAX_CATCHUP_BATCH_MS: Double = 80.0
 
     private let pcmQueue = DispatchQueue(label: "com.augmentos.sherpaonnx.pcmQueue", qos: .userInteractive)
+    private let pcmAvailable = DispatchSemaphore(value: 0)
     private var pcmBuffers = [Data]()
     private var isRunning = false
     private let lifecycleLock = NSLock()
@@ -601,6 +666,9 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
 
             let queueSizeBefore = self.pcmBuffers.count
             self.pcmBuffers.append(pcm16le)
+            if queueSizeBefore == 0 {
+                self.pcmAvailable.signal()
+            }
             let g2TraceQueueNs = DispatchTime.now().uptimeNanoseconds
             let g2TraceSamples = pcm16le.count / MemoryLayout<Int16>.size
             let g2TraceAudioMs = Double(g2TraceSamples) * 1000.0 / Double(Self.SAMPLE_RATE)
@@ -641,6 +709,13 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
         Bridge.log("🔄 Sherpa-ONNX processing loop started")
 
         while isRunning {
+            // Sleep until PCM actually arrives instead of polling every 10 ms.
+            // This removes ~0-10 ms of avoidable scheduling jitter on every wake.
+            if pcmAvailable.wait(timeout: .now() + .milliseconds(100)) == .timedOut {
+                continue
+            }
+            if !isRunning { break }
+
             // Pull one chunk immediately. If a backlog already exists, merge enough
             // queued chunks to amortize native/ORT call overhead without adding any
             // intentional waiting to the low-latency path.
@@ -668,6 +743,12 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                 }
                 audioData = merged
                 remainingDepth = self.pcmBuffers.count
+            }
+
+            // If batching left queued PCM behind, schedule the next drain
+            // immediately without waiting for another producer signal.
+            if remainingDepth > 0 {
+                pcmAvailable.signal()
             }
 
             if let data = audioData {
@@ -749,9 +830,6 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     STTTools.recoverFromRuntimeFailure(error.localizedDescription)
                     return
                 }
-            } else {
-                // Sleep briefly to avoid tight CPU loop if no audio is available
-                Thread.sleep(forTimeInterval: 0.01)
             }
         }
 
@@ -791,6 +869,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
         Bridge.log("🛑 Shutting down SherpaOnnxTranscriber...")
 
         isRunning = false
+        pcmAvailable.signal()
         processingTask?.cancel()
 
         // Synchronize access to recognizer during shutdown

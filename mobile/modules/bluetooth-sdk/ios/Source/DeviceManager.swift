@@ -318,6 +318,14 @@ struct ViewState {
     // iPhone mic solely to keep the local Sherpa worker scheduled. G2 LC3
     // remains the ONLY PCM fed to STT.
     private var g2BackgroundExecutionEngine: AVAudioEngine?
+
+    // Benchmark-only speech detector. It never gates or alters audio; it just
+    // timestamps likely speech onset so latency excludes pre-speech silence.
+    private var g2LabSpeechActive = false
+    private var g2LabSpeechCandidateFrames = 0
+    private var g2LabLastSpeechEnergyNs: UInt64 = 0
+    private var g2LabNoiseFloorRms: Double = 0.003
+
     private var micReinitTimer: Timer?
 
     /// STT:
@@ -510,6 +518,66 @@ struct ViewState {
         Bridge.sendMicLc3(lc3Data)
     }
 
+    private func updateG2LabSpeechActivity(_ pcmData: Data, ns: UInt64) {
+        let sampleCount = pcmData.count / MemoryLayout<Int16>.size
+        guard sampleCount >= 16 else { return }
+
+        var sumSquares = 0.0
+        var peak = 0.0
+        var measured = 0
+
+        pcmData.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            let samples = base.bindMemory(to: Int16.self, capacity: sampleCount)
+
+            // Subsample: enough for robust energy tracking without adding
+            // meaningful CPU cost to 20 ms G2 frames.
+            var i = 0
+            while i < sampleCount {
+                let s = Int16(littleEndian: samples[i])
+                let x = Double(s) / 32768.0
+                let ax = abs(x)
+                sumSquares += x * x
+                peak = max(peak, ax)
+                measured += 1
+                i += 2
+            }
+        }
+
+        guard measured > 0 else { return }
+        let rms = sqrt(sumSquares / Double(measured))
+
+        // Adaptive threshold follows quiet ambient noise but cannot drift high
+        // enough to make normal speech invisible.
+        let threshold = min(0.06, max(0.0065, g2LabNoiseFloorRms * 3.0))
+        let speechLike = rms >= threshold && peak >= max(0.018, threshold * 1.8)
+
+        if !g2LabSpeechActive {
+            if speechLike {
+                g2LabSpeechCandidateFrames += 1
+                if g2LabSpeechCandidateFrames >= 2 {
+                    g2LabSpeechActive = true
+                    g2LabLastSpeechEnergyNs = ns
+                    g2LabSpeechCandidateFrames = 0
+                    G2LabDiagnostics.markSpeechState(active: true, ns: ns)
+                }
+            } else {
+                g2LabSpeechCandidateFrames = 0
+                let clamped = min(0.03, max(0.0008, rms))
+                g2LabNoiseFloorRms = (g2LabNoiseFloorRms * 0.995) + (clamped * 0.005)
+            }
+        } else {
+            if speechLike {
+                g2LabLastSpeechEnergyNs = ns
+            } else if g2LabLastSpeechEnergyNs > 0,
+                      ns - g2LabLastSpeechEnergyNs >= 700_000_000
+            {
+                g2LabSpeechActive = false
+                G2LabDiagnostics.markSpeechState(active: false, ns: ns)
+            }
+        }
+    }
+
     private func handleSendingPcm(_ pcmData: Data) {
         // Bridge.log("MAN: handleSendingPcm() shouldSendPcm: \(shouldSendPcm) shouldSendLc3: \(shouldSendLc3)")
         if shouldSendPcm {
@@ -638,6 +706,8 @@ struct ViewState {
     }
 
     func handlePcm(_ pcmData: Data) {
+        let g2LabPcmNs = DispatchTime.now().uptimeNanoseconds
+        updateG2LabSpeechActivity(pcmData, ns: g2LabPcmNs)
         handleSendingPcm(pcmData)
 
         // Send PCM to local transcriber.

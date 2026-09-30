@@ -38,6 +38,11 @@ type NativeDiagnostics = {
   lastEndpointAgeMs?: number
   audioBacklogMs?: number
   sttToDisplayMs?: number
+  speechActive?: boolean
+  speechUtteranceCount?: number
+  speechToFirstPartialMs?: number
+  speechToDisplayMs?: number
+  longestSpeechPartialGapMs?: number
 }
 
 type Metrics = {
@@ -56,6 +61,10 @@ type Metrics = {
   longestPartialGap: string
   backlog: string
   sttToG2: string
+  speechToFirstPartial: string
+  speechToDisplay: string
+  speechUtterances: string
+  longestSpeechPartialGap: string
 }
 
 const EMPTY_DIAGNOSTICS: NativeDiagnostics = {}
@@ -138,6 +147,10 @@ export default function G2ModelLab() {
       longestPartialGap: metric(diagnostics.longestPartialGapMs),
       backlog: metric(diagnostics.audioBacklogMs),
       sttToG2: metric(diagnostics.sttToDisplayMs),
+      speechToFirstPartial: metric(diagnostics.speechToFirstPartialMs),
+      speechToDisplay: metric(diagnostics.speechToDisplayMs),
+      speechUtterances: metric(diagnostics.speechUtteranceCount),
+      longestSpeechPartialGap: metric(diagnostics.longestSpeechPartialGapMs),
     }),
     [diagnostics],
   )
@@ -374,7 +387,11 @@ export default function G2ModelLab() {
             LIVE BENCHMARK
           </RNText>
           {[
-            ["First partial", metrics.firstPartial + " ms"],
+            ["Speech → first partial", metrics.speechToFirstPartial + " ms"],
+            ["Speech → G2 display", metrics.speechToDisplay + " ms"],
+            ["Detected speech runs", metrics.speechUtterances],
+            ["Longest gap while speaking", metrics.longestSpeechPartialGap + " ms"],
+            ["Legacy first partial", metrics.firstPartial + " ms"],
             ["Partial interval", metrics.partialInterval + " ms"],
             ["Changed partials/sec", metrics.changedRate],
             ["Decode RTF", metrics.decodeRtf],
