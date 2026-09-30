@@ -26,6 +26,24 @@ class STTTools {
         stagedModel = nil
     }
 
+    // Local model runtimes sometimes use ISO-639-1 codes internally (Nemotron
+    // uses "it"), while the miniapp transcription API subscribes with canonical
+    // BCP-47 tags ("it-IT"). Normalize only the event tag; keep the raw model
+    // language available to Sherpa's per-stream option.
+    private static func eventLanguageTag(_ raw: String) -> String {
+        if raw.contains("-") { return raw }
+        switch raw.lowercased() {
+        case "it": return "it-IT"
+        case "en": return "en-US"
+        case "fr": return "fr-FR"
+        case "de": return "de-DE"
+        case "es": return "es-ES"
+        case "zh": return "zh-CN"
+        case "ko": return "ko-KR"
+        default: return raw
+        }
+    }
+
     // MARK: - SherpaOnnxTranscriber / STT Model Management
 
     static func didReceivePartialTranscription(_ text: String) {
@@ -33,8 +51,9 @@ class STTTools {
         G2LabDiagnostics.markBridge(ns: g2TraceBridgeNs)
         Bridge.log("G2LAB_TRACE T5_NATIVE_BRIDGE ns=\(g2TraceBridgeNs) final=false chars=\(text.count)")
         // Send partial result to server witgetConnectedBluetoothNameh proper formatting
-        let transcriptionLanguage =
+        let transcriptionLanguage = eventLanguageTag(
             UserDefaults.standard.string(forKey: "STTModelLanguageCode") ?? "en-US"
+        )
         // Bridge.log("Mentra: Sending partial transcription: \(text), \(transcriptionLanguage)")
         let transcription: [String: Any] = [
             "type": "local_transcription",
@@ -55,8 +74,9 @@ class STTTools {
         G2LabDiagnostics.markBridge(ns: g2TraceBridgeNs)
         Bridge.log("G2LAB_TRACE T5_NATIVE_BRIDGE ns=\(g2TraceBridgeNs) final=true chars=\(text.count)")
         // Send final result to server with proper formatting
-        let transcriptionLanguage =
+        let transcriptionLanguage = eventLanguageTag(
             UserDefaults.standard.string(forKey: "STTModelLanguageCode") ?? "en-US"
+        )
         Bridge.log("Mentra: Sending final transcription: \(text), \(transcriptionLanguage)")
         if !text.isEmpty {
             let transcription: [String: Any] = [
