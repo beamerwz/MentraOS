@@ -27,9 +27,12 @@ export interface ExtractionProgress {
 export interface DirectModelFile {
   fileName: string
   url: string
+  size?: number
 }
 
 export type ModelCompatibility = "native-likely" | "native-unverified" | "adapter-required"
+export type ModelRuntime = "sherpa-onnx" | "whisper.cpp" | "vosk" | "funasr" | "unknown"
+export type ModelDownloadMode = "test" | "store"
 
 export interface RemoteCatalogModel {
   id: string
@@ -37,11 +40,23 @@ export interface RemoteCatalogModel {
   source: string
   sourceUrl: string
   downloadUrl?: string
+  directFiles?: DirectModelFile[]
+  fileName?: string
   size?: number
   languageCode: string
   compatibility: ModelCompatibility
+  runtime: ModelRuntime
+  downloadMode: ModelDownloadMode
   detail: string
   tags: string[]
+}
+
+export interface CurrentModelSummary {
+  code: string
+  displayName: string
+  path: string
+  custom: boolean
+  source?: string
 }
 
 export interface ModelSourceLink {
@@ -66,6 +81,7 @@ export interface LanguageConfig {
 
 const DEFAULT_LANGUAGE = "en"
 const NEMOTRON_MARKER = ".g2labs-nemotron-v2"
+const CUSTOM_METADATA = ".g2labs-model.json"
 
 class STTModelManager {
   private static instance: STTModelManager
@@ -317,7 +333,7 @@ class STTModelManager {
   async getCurrentLanguageFromPreferences(): Promise<string> {
     try {
       const path = await BluetoothSdk.getSttModelPath()
-      if (path && path.includes("/stt_models/custom")) {
+      if (path && (path.includes("/stt_models/custom") || path.includes("/stt_models/quarantine/"))) {
         this.currentLanguage = "custom"
         return "custom"
       }
@@ -331,6 +347,55 @@ class STTModelManager {
       console.error("Error getting current STT language from preferences:", error)
       return ""
     }
+  }
+
+  async getCurrentModelSummary(): Promise<CurrentModelSummary> {
+    const path = await BluetoothSdk.getSttModelPath()
+    if (!path) return {code: "", displayName: "No model selected", path: "", custom: false}
+
+    if (path.includes("/stt_models/custom") || path.includes("/stt_models/quarantine/")) {
+      try {
+        const metadataPath = `${path}/${CUSTOM_METADATA}`
+        if (await RNFS.exists(metadataPath)) {
+          const metadata = JSON.parse(await RNFS.readFile(metadataPath, "utf8")) as {
+            displayName?: string
+            source?: string
+          }
+          return {
+            code: "custom",
+            displayName: metadata.displayName || "Custom Sherpa model",
+            path,
+            custom: true,
+            source: metadata.source,
+          }
+        }
+      } catch (error) {
+        console.warn("STTModelManager: custom metadata read failed", error)
+      }
+      return {code: "custom", displayName: "Custom Sherpa model", path, custom: true}
+    }
+
+    const code = this.getLanguageFromPath(path)
+    const config = this.languages[code]
+    if (config) {
+      return {code, displayName: config.displayName, path, custom: false, source: "G2 LABS"}
+    }
+    return {code, displayName: code || "Unknown model", path, custom: false}
+  }
+
+  private async writeModelMetadata(
+    modelPath: string,
+    displayName: string,
+    source: string,
+    sourceUrl?: string,
+  ): Promise<void> {
+    const metadata = {
+      displayName,
+      source,
+      sourceUrl: sourceUrl ?? "",
+      importedAt: new Date().toISOString(),
+    }
+    await RNFS.writeFile(`${modelPath}/${CUSTOM_METADATA}`, JSON.stringify(metadata, null, 2), "utf8")
   }
 
   getCurrentLanguage(): string {
@@ -613,7 +678,11 @@ class STTModelManager {
   }
 
   /** Import a user-supplied Sherpa .tar.bz2 model into the persistent custom slot. */
-  async importCustomArchive(sourcePath: string, languageCode = "it-IT"): Promise<void> {
+  async importCustomArchive(
+    sourcePath: string,
+    languageCode = "it-IT",
+    displayName = "Custom Sherpa model",
+  ): Promise<void> {
     const customDir = `${this.getModelDirectory()}/custom`
     await RNFS.mkdir(this.getModelDirectory(), {NSURLIsExcludedFromBackupKey: true})
     if (await RNFS.exists(customDir)) await RNFS.unlink(customDir)
@@ -622,7 +691,6 @@ class STTModelManager {
     const extracted = await BluetoothSdk.extractTarBz2(sourcePath, customDir)
     if (!extracted) throw new Error("Could not extract custom Sherpa model archive")
 
-    // Archives commonly contain one top-level model directory. Resolve it automatically.
     let modelPath = customDir
     if (!(await BluetoothSdk.validateSttModel(modelPath))) {
       const entries = await RNFS.readDir(customDir)
@@ -632,9 +700,12 @@ class STTModelManager {
 
     if (!(await BluetoothSdk.validateSttModel(modelPath))) {
       await RNFS.unlink(customDir).catch(() => undefined)
-      throw new Error("Invalid Sherpa model. Expected tokens.txt plus encoder/decoder/joiner ONNX files, or model.onnx for CTC.")
+      throw new Error(
+        "Invalid Sherpa model. Expected tokens.txt plus encoder/decoder/joiner ONNX files, or model.onnx for CTC.",
+      )
     }
 
+    await this.writeModelMetadata(modelPath, displayName, "Imported file")
     const activated = await BluetoothSdk.activateSttModel(modelPath, languageCode)
     if (!activated) throw new Error("Custom model failed its native recognizer smoke test")
     this.currentLanguage = "custom"
@@ -724,6 +795,9 @@ class STTModelManager {
           size: asset.size,
           languageCode: this.inferLanguageCode(name),
           compatibility: likely ? "native-likely" : "native-unverified",
+          runtime: "sherpa-onnx",
+          downloadMode: "test",
+          fileName: name,
           detail: likely
             ? "Official Sherpa archive · eligible for quarantine + native validation"
             : "Official Sherpa archive · format will be validated before activation",
@@ -732,66 +806,255 @@ class STTModelManager {
       })
   }
 
+  private hfFileUrl(repo: string, file: string): string {
+    const safePath = file
+      .split("/")
+      .map((part) => encodeURIComponent(part))
+      .join("/")
+    return `https://huggingface.co/${repo}/resolve/main/${safePath}`
+  }
+
   private async fetchHuggingFaceCatalog(query: string): Promise<RemoteCatalogModel[]> {
     const search = query.trim() || "speech recognition"
     const response = await fetch(
       `https://huggingface.co/api/models?pipeline_tag=automatic-speech-recognition&search=${encodeURIComponent(
         search,
-      )}&sort=downloads&direction=-1&limit=40`,
+      )}&sort=downloads&direction=-1&limit=24&full=true`,
     )
     if (!response.ok) throw new Error(`Hugging Face catalog HTTP ${response.status}`)
     const models = (await response.json()) as Array<{
       id?: string
       tags?: string[]
       downloads?: number
+      siblings?: Array<{rfilename?: string; size?: number}>
     }>
 
-    return models.slice(0, 40).map((model) => {
+    const inspect = async (model: (typeof models)[number]): Promise<RemoteCatalogModel> => {
       const id = model.id ?? "unknown-model"
+      let siblings = model.siblings ?? []
+      if (siblings.length === 0 && id !== "unknown-model") {
+        try {
+          const detailResponse = await fetch(`https://huggingface.co/api/models/${id}`)
+          if (detailResponse.ok) {
+            const detail = (await detailResponse.json()) as {siblings?: Array<{rfilename?: string; size?: number}>}
+            siblings = detail.siblings ?? []
+          }
+        } catch {
+          // Search remains useful even if repository file inspection is rate limited.
+        }
+      }
+
+      const files = siblings
+        .map((item) => ({name: item.rfilename ?? "", size: item.size}))
+        .filter((item) => item.name.length > 0)
+      const names = files.map((item) => item.name)
+      const tar = files.find((item) => item.name.endsWith(".tar.bz2"))
+      const tokens = names.find((name) => /(^|\/)tokens\.txt$/i.test(name))
+      const encoder =
+        names.find((name) => /(^|\/)encoder\.int8\.onnx$/i.test(name)) ??
+        names.find((name) => /(^|\/)encoder\.onnx$/i.test(name))
+      const decoder =
+        names.find((name) => /(^|\/)decoder\.int8\.onnx$/i.test(name)) ??
+        names.find((name) => /(^|\/)decoder\.onnx$/i.test(name))
+      const joiner =
+        names.find((name) => /(^|\/)joiner\.int8\.onnx$/i.test(name)) ??
+        names.find((name) => /(^|\/)joiner\.onnx$/i.test(name))
+      const ctc =
+        names.find((name) => /(^|\/)model\.int8\.onnx$/i.test(name)) ??
+        names.find((name) => /(^|\/)model\.onnx$/i.test(name))
+
+      let directFiles: DirectModelFile[] | undefined
+      if (tokens && encoder && decoder && joiner) {
+        directFiles = [encoder, decoder, joiner, tokens].map((fileName) => ({
+          fileName: fileName.split("/").pop() ?? fileName,
+          url: this.hfFileUrl(id, fileName),
+          size: files.find((entry) => entry.name === fileName)?.size,
+        }))
+      } else if (tokens && ctc) {
+        directFiles = [ctc, tokens].map((fileName) => ({
+          fileName: fileName.split("/").pop() ?? fileName,
+          url: this.hfFileUrl(id, fileName),
+          size: files.find((entry) => entry.name === fileName)?.size,
+        }))
+      }
+
+      const directTest = Boolean(tar || directFiles?.length)
       const tags = model.tags ?? []
-      const sherpaTagged = id.toLowerCase().includes("sherpa") || tags.some((tag) => tag.toLowerCase().includes("sherpa"))
+      const sherpaTagged =
+        id.toLowerCase().includes("sherpa") || tags.some((tag) => tag.toLowerCase().includes("sherpa"))
+
       return {
         id: `hf:${id}`,
         displayName: id,
         source: "Hugging Face",
         sourceUrl: `https://huggingface.co/${id}`,
+        downloadUrl: tar ? this.hfFileUrl(id, tar.name) : undefined,
+        directFiles,
+        fileName: tar?.name,
+        size: tar?.size ?? directFiles?.reduce((sum, file) => sum + (file.size ?? 0), 0) ?? undefined,
         languageCode: this.inferLanguageCode(id),
-        compatibility: sherpaTagged ? "native-unverified" : "adapter-required",
-        detail: sherpaTagged
-          ? "Sherpa-related repository · inspect files / package before activation"
-          : `Discovery only · runtime adapter may be required · ${model.downloads ?? 0} downloads`,
+        compatibility: directTest ? (sherpaTagged ? "native-likely" : "native-unverified") : "adapter-required",
+        runtime: directTest ? "sherpa-onnx" : "unknown",
+        downloadMode: directTest ? "test" : "store",
+        detail: directTest
+          ? tar
+            ? "Direct .tar.bz2 package detected · quarantine test available"
+            : "Complete Sherpa ONNX file set detected · direct download + quarantine test"
+          : `Discovery result · adapter/layout support required · ${model.downloads ?? 0} downloads`,
         tags,
-      } satisfies RemoteCatalogModel
-    })
+      }
+    }
+
+    return Promise.all(models.slice(0, 18).map((model) => inspect(model)))
+  }
+
+  private async fetchWhisperCppCatalog(query: string): Promise<RemoteCatalogModel[]> {
+    const response = await fetch("https://huggingface.co/api/models/ggerganov/whisper.cpp")
+    if (!response.ok) throw new Error(`whisper.cpp catalog HTTP ${response.status}`)
+    const detail = (await response.json()) as {siblings?: Array<{rfilename?: string; size?: number}>}
+    const needle = query.trim().toLowerCase()
+    return (detail.siblings ?? [])
+      .map((file) => ({name: file.rfilename ?? "", size: file.size}))
+      .filter((file) => file.name.endsWith(".bin"))
+      .filter((file) => !needle || file.name.toLowerCase().includes(needle) || needle.includes("whisper"))
+      .slice(0, 18)
+      .map((file) => ({
+        id: `whispercpp:${file.name}`,
+        displayName: file.name.replace(/^ggml-/, "").replace(/\.bin$/, ""),
+        source: "whisper.cpp · Hugging Face",
+        sourceUrl: "https://huggingface.co/ggerganov/whisper.cpp/tree/main",
+        downloadUrl: this.hfFileUrl("ggerganov/whisper.cpp", file.name),
+        fileName: file.name,
+        size: file.size,
+        languageCode: "it",
+        compatibility: "adapter-required",
+        runtime: "whisper.cpp",
+        downloadMode: "store",
+        detail: "Direct GGML download · stored locally now; whisper.cpp runtime adapter required to run it",
+        tags: ["whisper.cpp", "ggml", "offline"],
+      }))
+  }
+
+  private fetchVoskCatalog(query: string): RemoteCatalogModel[] {
+    const needle = query.trim().toLowerCase()
+    const matchesItalian =
+      !needle || ["italian", "italiano", "it", "vosk"].some((term) => needle.includes(term) || term.includes(needle))
+    if (!matchesItalian) return []
+
+    return [
+      {
+        id: "vosk:vosk-model-small-it-0.22",
+        displayName: "Vosk Italian Small 0.22",
+        source: "Vosk model zoo",
+        sourceUrl: "https://alphacephei.com/vosk/models",
+        downloadUrl: "https://alphacephei.com/vosk/models/vosk-model-small-it-0.22.zip",
+        fileName: "vosk-model-small-it-0.22.zip",
+        size: 48 * 1024 * 1024,
+        languageCode: "it-IT",
+        compatibility: "adapter-required",
+        runtime: "vosk",
+        downloadMode: "store",
+        detail: "48 MB mobile Italian model · direct download · Vosk runtime adapter required",
+        tags: ["vosk", "italian", "offline", "mobile"],
+      },
+      {
+        id: "vosk:vosk-model-it-0.22",
+        displayName: "Vosk Italian Full 0.22",
+        source: "Vosk model zoo",
+        sourceUrl: "https://alphacephei.com/vosk/models",
+        downloadUrl: "https://alphacephei.com/vosk/models/vosk-model-it-0.22.zip",
+        fileName: "vosk-model-it-0.22.zip",
+        size: 1200 * 1024 * 1024,
+        languageCode: "it-IT",
+        compatibility: "adapter-required",
+        runtime: "vosk",
+        downloadMode: "store",
+        detail: "Approx. 1.2 GB Italian model · direct download · Vosk runtime adapter required",
+        tags: ["vosk", "italian", "offline"],
+      },
+    ]
   }
 
   async browseRemoteModels(query = ""): Promise<RemoteCatalogModel[]> {
-    const [sherpa, huggingFace] = await Promise.allSettled([
+    const [sherpa, huggingFace, whisperCpp] = await Promise.allSettled([
       this.fetchSherpaReleaseCatalog(query),
       this.fetchHuggingFaceCatalog(query),
+      this.fetchWhisperCppCatalog(query),
     ])
 
-    const result: RemoteCatalogModel[] = []
+    const result: RemoteCatalogModel[] = [...this.fetchVoskCatalog(query)]
     if (sherpa.status === "fulfilled") result.push(...sherpa.value)
     if (huggingFace.status === "fulfilled") result.push(...huggingFace.value)
+    if (whisperCpp.status === "fulfilled") result.push(...whisperCpp.value)
 
-    if (result.length === 0) {
-      const reasons = [sherpa, huggingFace]
+    const seen = new Set<string>()
+    const deduped = result.filter((model) => {
+      const key = `${model.source}:${model.displayName}`.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+
+    if (deduped.length === 0) {
+      const reasons = [sherpa, huggingFace, whisperCpp]
         .filter((entry): entry is PromiseRejectedResult => entry.status === "rejected")
         .map((entry) => String(entry.reason))
         .join(" · ")
       if (reasons) throw new Error(reasons)
     }
 
-    return result
+    return deduped.slice(0, 80)
+  }
+
+  private async downloadDirectFiles(
+    files: DirectModelFile[],
+    destination: string,
+    onProgress?: (progress: DownloadProgress) => void,
+  ): Promise<void> {
+    await RNFS.mkdir(destination, {NSURLIsExcludedFromBackupKey: true})
+    const expected = files.reduce((sum, file) => sum + (file.size ?? 0), 0)
+    let completed = 0
+
+    for (const file of files) {
+      const target = `${destination}/${file.fileName}`
+      const transfer = RNFS.downloadFile({
+        fromUrl: file.url,
+        toFile: target,
+        progressDivider: 2,
+        progress: (event: RNFS.DownloadProgressCallbackResultT) => {
+          const total = Math.max(expected, completed + event.contentLength, completed + event.bytesWritten, 1)
+          onProgress?.({
+            jobId: event.jobId,
+            bytesWritten: completed + event.bytesWritten,
+            contentLength: total,
+            percentage: Math.min(99, Math.round(((completed + event.bytesWritten) / total) * 100)),
+          })
+        },
+        connectionTimeout: 30000,
+        readTimeout: 30000,
+      })
+      this.downloadJobId = transfer.jobId
+      const result = await transfer.promise
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        throw new Error(`Download failed for ${file.fileName} with status ${result.statusCode}`)
+      }
+      const stat = await RNFS.stat(target)
+      completed += Number(stat.size)
+    }
+
+    this.downloadJobId = undefined
+    onProgress?.({jobId: 0, bytesWritten: completed, contentLength: Math.max(completed, 1), percentage: 100})
   }
 
   async downloadAndTestCatalogModel(
     model: RemoteCatalogModel,
     onProgress?: (progress: DownloadProgress) => void,
   ): Promise<void> {
-    if (!model.downloadUrl) {
-      throw new Error("This source does not expose a directly testable Sherpa archive. Open its model page instead.")
+    if (model.downloadMode !== "test") {
+      throw new Error(`${model.runtime} runtime is not installed yet. Use Download to Library instead.`)
+    }
+    if (!model.downloadUrl && !model.directFiles?.length) {
+      throw new Error("This source does not expose a directly testable Sherpa package.")
     }
 
     const safeId = this.safeCatalogId(model.id)
@@ -804,45 +1067,44 @@ class STTModelManager {
     await RNFS.mkdir(quarantineRoot, {NSURLIsExcludedFromBackupKey: true})
 
     try {
-      const download = RNFS.downloadFile({
-        fromUrl: model.downloadUrl,
-        toFile: tempPath,
-        progressDivider: 2,
-        progress: (event: RNFS.DownloadProgressCallbackResultT) => {
-          const total = Math.max(event.contentLength, event.bytesWritten, 1)
-          onProgress?.({
-            jobId: event.jobId,
-            bytesWritten: event.bytesWritten,
-            contentLength: total,
-            percentage: Math.min(99, Math.round((event.bytesWritten / total) * 100)),
-          })
-        },
-        connectionTimeout: 30000,
-        readTimeout: 30000,
-      })
-      this.downloadJobId = download.jobId
-      const result = await download.promise
-      if (result.statusCode < 200 || result.statusCode >= 300) {
-        throw new Error(`Download failed with status ${result.statusCode}`)
-      }
-      this.downloadJobId = undefined
-      onProgress?.({
-        jobId: 0,
-        bytesWritten: model.size ?? 1,
-        contentLength: model.size ?? 1,
-        percentage: 100,
-      })
+      if (model.directFiles?.length) {
+        await this.downloadDirectFiles(model.directFiles, quarantineRoot, onProgress)
+      } else if (model.downloadUrl) {
+        const download = RNFS.downloadFile({
+          fromUrl: model.downloadUrl,
+          toFile: tempPath,
+          progressDivider: 2,
+          progress: (event: RNFS.DownloadProgressCallbackResultT) => {
+            const total = Math.max(event.contentLength, event.bytesWritten, 1)
+            onProgress?.({
+              jobId: event.jobId,
+              bytesWritten: event.bytesWritten,
+              contentLength: total,
+              percentage: Math.min(99, Math.round((event.bytesWritten / total) * 100)),
+            })
+          },
+          connectionTimeout: 30000,
+          readTimeout: 30000,
+        })
+        this.downloadJobId = download.jobId
+        const result = await download.promise
+        if (result.statusCode < 200 || result.statusCode >= 300) {
+          throw new Error(`Download failed with status ${result.statusCode}`)
+        }
+        this.downloadJobId = undefined
 
-      const extracted = await BluetoothSdk.extractTarBz2(tempPath, quarantineRoot)
-      if (!extracted) throw new Error("Archive extraction failed in quarantine")
+        const extracted = await BluetoothSdk.extractTarBz2(tempPath, quarantineRoot)
+        if (!extracted) throw new Error("Archive extraction failed in quarantine")
+      }
 
       const modelPath = await this.resolveValidModelPath(quarantineRoot)
       if (!modelPath) {
         throw new Error(
-          "QUARANTINED / REJECTED: archive does not match a supported online Sherpa layout (tokens + transducer or supported CTC).",
+          "QUARANTINED / REJECTED: download does not match a supported online Sherpa layout (tokens + transducer or supported CTC).",
         )
       }
 
+      await this.writeModelMetadata(modelPath, model.displayName, model.source, model.sourceUrl)
       const activated = await BluetoothSdk.activateSttModel(modelPath, model.languageCode)
       if (!activated) {
         throw new Error(
@@ -856,6 +1118,53 @@ class STTModelManager {
     } finally {
       await RNFS.unlink(tempPath).catch(() => undefined)
     }
+  }
+
+  async downloadCatalogModelToLibrary(
+    model: RemoteCatalogModel,
+    onProgress?: (progress: DownloadProgress) => void,
+  ): Promise<string> {
+    if (!model.downloadUrl && !model.directFiles?.length) {
+      throw new Error("No direct download is exposed by this source.")
+    }
+
+    const safeId = this.safeCatalogId(model.id)
+    const destination = `${this.getModelDirectory()}/library/${safeId}`
+    if (await RNFS.exists(destination)) await RNFS.unlink(destination)
+    await RNFS.mkdir(destination, {NSURLIsExcludedFromBackupKey: true})
+
+    if (model.directFiles?.length) {
+      await this.downloadDirectFiles(model.directFiles, destination, onProgress)
+    } else if (model.downloadUrl) {
+      const fileName = model.fileName || model.downloadUrl.split("/").pop() || "model.bin"
+      const target = `${destination}/${fileName}`
+      const transfer = RNFS.downloadFile({
+        fromUrl: model.downloadUrl,
+        toFile: target,
+        progressDivider: 2,
+        progress: (event: RNFS.DownloadProgressCallbackResultT) => {
+          const total = Math.max(event.contentLength, event.bytesWritten, 1)
+          onProgress?.({
+            jobId: event.jobId,
+            bytesWritten: event.bytesWritten,
+            contentLength: total,
+            percentage: Math.min(100, Math.round((event.bytesWritten / total) * 100)),
+          })
+        },
+        connectionTimeout: 30000,
+        readTimeout: 30000,
+      })
+      this.downloadJobId = transfer.jobId
+      const result = await transfer.promise
+      if (result.statusCode < 200 || result.statusCode >= 300) {
+        this.downloadJobId = undefined
+        throw new Error(`Download failed with status ${result.statusCode}`)
+      }
+      this.downloadJobId = undefined
+    }
+
+    await this.writeModelMetadata(destination, model.displayName, model.source, model.sourceUrl)
+    return destination
   }
 
   async cancelDownload(): Promise<void> {
