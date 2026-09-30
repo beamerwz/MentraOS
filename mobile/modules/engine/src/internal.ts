@@ -77,6 +77,9 @@ export type {
   RemoteCatalogModel,
   ModelSourceLink,
   ModelCompatibility,
+  ModelRuntime,
+  ModelDownloadMode,
+  CurrentModelSummary,
 } from "./services/STTModelManager"
 export {default as ttsModelManager, TTSModelManager} from "./services/TTSModelManager"
 export {default as offlineSpeechModelService} from "./services/OfflineSpeechModelService"
