@@ -817,12 +817,16 @@ class STTModelManager {
       )}&sort=downloads&direction=-1&limit=24&full=true`,
     )
     if (!response.ok) throw new Error(`Hugging Face catalog HTTP ${response.status}`)
-    const models = (await response.json()) as Array<{
+    const models = ((await response.json()) as Array<{
       id?: string
       tags?: string[]
       downloads?: number
       siblings?: Array<{rfilename?: string; size?: number}>
-    }>
+    }>).filter((model) => {
+      const id = (model.id ?? "").toLowerCase()
+      const tags = (model.tags ?? []).map((tag) => tag.toLowerCase())
+      return !id.includes("faster-whisper") && !id.includes("ctranslate2") && !tags.includes("ctranslate2")
+    })
 
     const inspect = async (model: (typeof models)[number]): Promise<RemoteCatalogModel> => {
       const id = model.id ?? "unknown-model"
@@ -858,25 +862,49 @@ class STTModelManager {
         names.find((name) => /(^|\/)model\.int8\.onnx$/i.test(name)) ??
         names.find((name) => /(^|\/)model\.onnx$/i.test(name))
 
-      let directFiles: DirectModelFile[] | undefined
+      let sherpaFiles: DirectModelFile[] | undefined
       if (tokens && encoder && decoder && joiner) {
-        directFiles = [encoder, decoder, joiner, tokens].map((fileName) => ({
+        sherpaFiles = [encoder, decoder, joiner, tokens].map((fileName) => ({
           fileName: fileName.split("/").pop() ?? fileName,
           url: this.hfFileUrl(id, fileName),
           size: files.find((entry) => entry.name === fileName)?.size,
         }))
       } else if (tokens && ctc) {
-        directFiles = [ctc, tokens].map((fileName) => ({
+        sherpaFiles = [ctc, tokens].map((fileName) => ({
           fileName: fileName.split("/").pop() ?? fileName,
           url: this.hfFileUrl(id, fileName),
           size: files.find((entry) => entry.name === fileName)?.size,
         }))
       }
 
-      const directTest = Boolean(tar || directFiles?.length)
+      // Search V2 can also download non-Sherpa model packages straight from
+      // their Hugging Face repository into the local library. We do not claim
+      // they are runnable until their runtime adapter exists.
+      let storeFiles: DirectModelFile[] | undefined
+      if (!sherpaFiles && !tar) {
+        const standalone =
+          files.find((entry) => /\.(nemo|gguf)$/i.test(entry.name)) ??
+          files.find((entry) => /(^|\/)model\.bin$/i.test(entry.name))
+        const bundle = standalone
+          ? [standalone]
+          : files
+              .filter((entry) => /\.(onnx|json|txt|yaml|yml|model|tiktoken)$/i.test(entry.name))
+              .slice(0, 24)
+        if (bundle.length > 0) {
+          storeFiles = bundle.map((entry) => ({
+            fileName: entry.name.split("/").pop() ?? entry.name,
+            url: this.hfFileUrl(id, entry.name),
+            size: entry.size,
+          }))
+        }
+      }
+
+      const directTest = Boolean(tar || sherpaFiles?.length)
+      const directFiles = sherpaFiles ?? storeFiles
       const tags = model.tags ?? []
       const sherpaTagged =
         id.toLowerCase().includes("sherpa") || tags.some((tag) => tag.toLowerCase().includes("sherpa"))
+      const hasDownload = Boolean(tar || directFiles?.length)
 
       return {
         id: `hf:${id}`,
@@ -895,7 +923,9 @@ class STTModelManager {
           ? tar
             ? "Direct .tar.bz2 package detected · quarantine test available"
             : "Complete Sherpa ONNX file set detected · direct download + quarantine test"
-          : `Discovery result · adapter/layout support required · ${model.downloads ?? 0} downloads`,
+          : hasDownload
+            ? `Direct repository files available · download to G2 LABS library · runtime adapter required · ${model.downloads ?? 0} downloads`
+            : `Discovery result · adapter/layout support required · ${model.downloads ?? 0} downloads`,
         tags,
       }
     }
