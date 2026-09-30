@@ -362,16 +362,22 @@ struct ViewState {
             Bridge.log("Failed to create SherpaOnnxTranscriber - no root view controller found")
         }
 
-        // Initialize the transcriber
+        // Initialize model runtime away from MainActor. Loading a 600+ MB model on
+        // the BLE/UI actor stalls G2 notifications and looks exactly like a lost connection.
         if let transcriber = transcriber {
-            if transcriber.initialize() {
-                Bridge.log("SherpaOnnxTranscriber fully initialized")
-            } else {
-                // Do not construct a second ORT recognizer in the same process.
-                // If the selected model fails, stage the known-good fallback and
-                // use it on the next clean launch.
-                if STTTools.fallbackToItalianBuiltIn(reason: "startup recognizer smoke test failed") {
-                    Bridge.log("Sherpa fallback staged for next clean launch")
+            let startupTranscriber = transcriber
+            DispatchQueue.global(qos: .userInitiated).async {
+                let ok = startupTranscriber.initialize()
+                DispatchQueue.main.async {
+                    if ok {
+                        Bridge.log("SherpaOnnxTranscriber startup initialization finished")
+                    } else {
+                        // Do not construct a second ORT recognizer in the same process.
+                        // Stage the known-good fallback for the next clean launch only.
+                        if STTTools.fallbackToItalianBuiltIn(reason: "startup recognizer smoke test failed") {
+                            Bridge.log("Sherpa fallback staged for next clean launch")
+                        }
+                    }
                 }
             }
         }
@@ -424,10 +430,12 @@ struct ViewState {
      */
     func handleGlassesMicData(_ lc3Data: Data, _ frameSize: Int = 20, sequenceNumber: Int? = nil) {
         let g2TraceLc3Ns = DispatchTime.now().uptimeNanoseconds
+        G2LabDiagnostics.markLc3(ns: g2TraceLc3Ns)
         Bridge.log("G2LAB_TRACE T0_LC3 ns=\(g2TraceLc3Ns) bytes=\(lc3Data.count) frameMs=\(frameSize) seq=\(sequenceNumber.map(String.init) ?? "-")")
         recordLc3Packet(sequenceNumber: sequenceNumber)
         guard let lc3Converter = lc3Converter else {
             Bridge.log("MAN: LC3 converter not initialized")
+            G2LabDiagnostics.markError("LC3 converter is not initialized")
             recordMicDecodeFailure()
             return
         }
@@ -441,11 +449,13 @@ struct ViewState {
         let pcmData = lc3Converter.decode(lc3Data, frameSize: frameSize) as Data
         guard pcmData.count > 0 else {
             Bridge.log("MAN: Failed to decode glasses LC3 audio")
+            G2LabDiagnostics.markError("G2 LC3 packet could not be decoded to PCM")
             recordMicDecodeFailure()
             return
         }
         // Forward to handlePcm which handles SDK audio events and encoding.
         let g2TracePcmNs = DispatchTime.now().uptimeNanoseconds
+        G2LabDiagnostics.markPcm(ns: g2TracePcmNs)
         let g2TraceSamples = pcmData.count / MemoryLayout<Int16>.size
         let g2TracePcmMs = Double(g2TraceSamples) * 1000.0 / 16_000.0
         Bridge.log("G2LAB_TRACE T1_PCM ns=\(g2TracePcmNs) bytes=\(pcmData.count) samples=\(g2TraceSamples) audioMs=\(String(format: "%.2f", g2TracePcmMs)) decodeMs=\(String(format: "%.3f", Double(g2TracePcmNs - g2TraceLc3Ns) / 1_000_000.0))")
@@ -518,6 +528,7 @@ struct ViewState {
 #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
         if shouldSendTranscript || localSttFallbackActive {
             let g2TraceSttNs = DispatchTime.now().uptimeNanoseconds
+            G2LabDiagnostics.markIngest(ns: g2TraceSttNs)
             Bridge.log("G2LAB_TRACE T2_STT_INGEST ns=\(g2TraceSttNs) bytes=\(pcmData.count)")
             transcriber?.acceptAudio(pcm16le: pcmData)
         }
@@ -1019,15 +1030,53 @@ struct ViewState {
     /// C++ API during an in-process recognizer teardown/recreate, which produces an
     /// unrecoverable EXC_BAD_ACCESS in SetIntraOpNumThreads. File validation is safe;
     /// native construction is deferred to the next clean process launch.
-    func activateSttModel(path: String, languageCode: String) -> Bool {
+    func activateSttModel(path: String, languageCode: String) async -> Bool {
         #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
         guard STTTools.validateSTTModel(path) else {
-            Bridge.log("STT activation rejected: model files are incomplete at \(path)")
+            let message = "STT activation rejected: model files are incomplete at \(path)"
+            Bridge.log(message)
+            G2LabDiagnostics.markError(message)
             return false
         }
+
         STTTools.setSttModelDetails(path, languageCode)
-        Bridge.log("STT model staged for clean-launch activation: \(path)")
-        return true
+
+        guard let transcriber else {
+            G2LabDiagnostics.markModel(state: "staged-relaunch", path: path)
+            Bridge.log("STT model staged: native transcriber object is unavailable until relaunch")
+            return true
+        }
+
+        if transcriber.hasActiveRecognizer {
+            // ORT/Sherpa are intentionally single-model-per-process on iOS.
+            // Swapping an already-created recognizer caused the previous EXC_BAD_ACCESS.
+            G2LabDiagnostics.markModel(state: "staged-relaunch", path: path)
+            Bridge.log("STT model staged for clean-launch activation: \(path)")
+            return true
+        }
+
+        guard transcriber.canInitializeSelectedModelInProcess else {
+            G2LabDiagnostics.markModel(state: "staged-relaunch", path: path)
+            Bridge.log("STT model staged while another initialization owns ORT: \(path)")
+            return true
+        }
+
+        // Fresh process with no recognizer created yet: initialize the selected model now,
+        // but never on MainActor so model mmap/session creation cannot starve G2 BLE.
+        G2LabDiagnostics.resetPipeline()
+        G2LabDiagnostics.markModel(state: "initializing", path: path)
+        let worker = transcriber
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let ok = worker.initialize()
+                if ok {
+                    Bridge.log("STT model activated live without relaunch: \(path)")
+                } else {
+                    Bridge.log("STT live activation failed: \(path)")
+                }
+                continuation.resume(returning: ok)
+            }
+        }
         #else
         return false
         #endif
