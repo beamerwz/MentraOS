@@ -54,7 +54,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     )
   }
   const isG2AccessBuild = process.env.G2_ACCESS_BUILD === "1"
-  const appName = isG2AccessBuild ? "G2 LABS" : isValidVariant ? variantName : variant.appName
+  const appName = isG2AccessBuild ? "G2 Glasses" : isValidVariant ? variantName : variant.appName
   const baseId = variant.packageName
   // replace non-alphanumeric characters with underscores:
   const normalizedVariantId = variantName?.toLowerCase().replace(/[^a-zA-Z0-9_]/g, "")
@@ -96,15 +96,15 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   return {
     ...config,
     name: appName,
-    slug: isG2AccessBuild ? "g2-labs" : "Mentra",
+    slug: isG2AccessBuild ? "g2-glasses" : "Mentra",
     // Coordinated prereleases expose their full identity (for example,
     // 3.1.0-beta.57) to shipped JavaScript while stores retain the plain
     // marketing version so the exact tested binary can be promoted.
     version: process.env.MENTRAOS_NATIVE_MARKETING_VERSION || familyBaseVersion,
-    scheme: isG2AccessBuild ? "g2labs" : "com.mentra",
+    scheme: isG2AccessBuild ? "g2glasses" : "com.mentra",
     orientation: "portrait",
     userInterfaceStyle: isG2AccessBuild ? "dark" : "automatic",
-    icon: variant.icon,
+    icon: isG2AccessBuild ? "./assets/g2labs/icon.png" : variant.icon,
     updates: {
       fallbackToCacheTimeout: 0,
     },
@@ -120,9 +120,9 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
       versionCode: buildNumber,
       adaptiveIcon: {
-        foregroundImage: variant.adaptiveIcon,
+        foregroundImage: isG2AccessBuild ? "./assets/g2labs/icon.png" : variant.adaptiveIcon,
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
-        backgroundColor: "#fff",
+        backgroundColor: isG2AccessBuild ? "#050208" : "#fff",
       },
       allowBackup: false,
       permissions: [
@@ -159,7 +159,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ],
     },
     ios: {
-      icon: variant.icon,
+      icon: isG2AccessBuild ? "./assets/g2labs/icon.png" : variant.icon,
       supportsTablet: false,
       requireFullScreen: true,
       buildNumber: String(buildNumber),
@@ -171,15 +171,15 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
         NSMicrophoneUsageDescription:
           isG2AccessBuild
-            ? "G2 LABS uses microphone audio for live captions when phone audio is selected."
+            ? "G2 Glasses uses microphone audio for live captions when phone audio is selected."
             : "The Mentra App uses your phone microphone for features such as live captions, translation, notes, and video recording when they use phone audio. You can connect glasses and use other features without allowing microphone access.",
         NSBluetoothAlwaysUsageDescription: isG2AccessBuild
-          ? "G2 LABS uses Bluetooth to pair with and connect to your G2 glasses."
+          ? "G2 Glasses uses Bluetooth to pair with and connect to your G2 glasses."
           : "This app needs access to your Bluetooth to connect to your glasses.",
         NSLocationWhenInUseUsageDescription:
           "Mentra uses your location to display nearby points of interest, weather updates, and navigation directions on your smart glasses. For example, when you're walking, the app can show restaurants within 100 meters or provide turn-by-turn directions to your destination on your glasses display.",
         NSBluetoothPeripheralUsageDescription: isG2AccessBuild
-          ? "G2 LABS uses Bluetooth to pair with and connect to your G2 glasses."
+          ? "G2 Glasses uses Bluetooth to pair with and connect to your G2 glasses."
           : "This app needs access to your Bluetooth to connect to your glasses.",
         NSCalendarsUsageDescription:
           "Mentra accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
