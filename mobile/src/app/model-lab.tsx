@@ -7,7 +7,7 @@ import {router} from "expo-router"
 
 import {Screen} from "@/components/ignite"
 import {sttModelManager as STT} from "@mentra/engine-host-internal"
-import type {RemoteCatalogModel} from "@mentra/engine-host-internal"
+import type {CurrentModelSummary, RemoteCatalogModel} from "@mentra/engine-host-internal"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 
 // The unsigned G2 IPA workflow is mobile/**-triggered but rebuilds the Captions
@@ -112,6 +112,12 @@ export default function G2ModelLab() {
   const [browserModels, setBrowserModels] = useState<RemoteCatalogModel[]>([])
   const [browserLoading, setBrowserLoading] = useState(false)
   const [browserError, setBrowserError] = useState("")
+  const [currentModel, setCurrentModel] = useState<CurrentModelSummary>({
+    code: "",
+    displayName: "Loading current model…",
+    path: "",
+    custom: false,
+  })
   const sourceLinks = useMemo(() => STT.getModelSourceLinks(), [])
 
   const refreshDiagnostics = async () => {
@@ -128,8 +134,21 @@ export default function G2ModelLab() {
     }
   }
 
+  const refreshCurrentModel = async () => {
+    try {
+      const summary = await STT.getCurrentModelSummary()
+      setCurrentModel(summary)
+      if (summary.code) setCurrent(summary.code)
+      return summary
+    } catch (error) {
+      console.warn("G2 Model Lab: current-model refresh failed", error)
+      return null
+    }
+  }
+
   useEffect(() => {
     void STT.getCurrentLanguageFromPreferences().then((value) => value && setCurrent(value))
+    void refreshCurrentModel()
     void refreshDiagnostics()
     const timer = setInterval(() => {
       void refreshDiagnostics()
@@ -163,7 +182,7 @@ export default function G2ModelLab() {
   )
 
   const runtimeState = modelStateLabel(diagnostics.modelState)
-  const appVersion = Application.nativeApplicationVersion || "3.1.2"
+  const appVersion = Application.nativeApplicationVersion || "3.1.3"
 
   const activate = async (code: string) => {
     try {
@@ -178,6 +197,7 @@ export default function G2ModelLab() {
       setStatus("Validating + loading model…")
       await STT.activateLanguage(code)
       setCurrent(code)
+      await refreshCurrentModel()
 
       const snapshot = await refreshDiagnostics()
       if (snapshot?.modelState === "ready") {
@@ -212,8 +232,9 @@ export default function G2ModelLab() {
       const source = decodeURIComponent(asset.uri.replace("file://", ""))
       await RNFS.copyFile(source, temp)
 
-      await STT.importCustomArchive(temp, "it-IT")
+      await STT.importCustomArchive(temp, "it-IT", asset.name || "Custom Sherpa model")
       setCurrent("custom")
+      await refreshCurrentModel()
 
       const snapshot = await refreshDiagnostics()
       if (snapshot?.modelState === "ready") {
@@ -247,7 +268,8 @@ export default function G2ModelLab() {
   }
 
   const testRemoteModel = async (model: RemoteCatalogModel) => {
-    if (!model.downloadUrl) {
+    const hasDirectDownload = !!model.downloadUrl || !!model.directFiles?.length
+    if (!hasDirectDownload) {
       await Linking.openURL(model.sourceUrl)
       return
     }
@@ -255,19 +277,29 @@ export default function G2ModelLab() {
     try {
       setBusy(`remote:${model.id}`)
       setProgress(0)
-      setStatus(`QUARANTINE · downloading ${model.displayName}`)
-      await STT.downloadAndTestCatalogModel(model, (p) => setProgress(p.percentage))
-      setCurrent("custom")
-      const snapshot = await refreshDiagnostics()
-      if (snapshot?.modelState === "staged-relaunch") {
-        setStatus(`SAFE TEST STAGED · ${model.displayName} · fully close/reopen once`)
-      } else if (snapshot?.modelState === "ready") {
-        setStatus(`REMOTE MODEL LIVE · ${model.displayName}`)
+
+      if (model.downloadMode === "test") {
+        setStatus(`QUARANTINE · downloading ${model.displayName}`)
+        await STT.downloadAndTestCatalogModel(model, (p) => setProgress(p.percentage))
+        setCurrent("custom")
+        await refreshCurrentModel()
+        const snapshot = await refreshDiagnostics()
+        if (snapshot?.modelState === "staged-relaunch") {
+          setStatus(`SAFE TEST STAGED · ${model.displayName} · fully close/reopen once`)
+        } else if (snapshot?.modelState === "ready") {
+          setStatus(`REMOTE MODEL LIVE · ${model.displayName}`)
+        } else {
+          setStatus(`Model validated and staged · ${model.displayName}`)
+        }
       } else {
-        setStatus(`Model validated and staged · ${model.displayName}`)
+        setStatus(`DOWNLOADING · ${model.displayName}`)
+        await STT.downloadCatalogModelToLibrary(model, (p) => setProgress(p.percentage))
+        setStatus(
+          `DOWNLOADED · ${model.displayName} · saved in G2 LABS library · ${model.runtime} runtime adapter required before use`,
+        )
       }
     } catch (error: any) {
-      setStatus(error?.message ?? "Remote model test failed safely")
+      setStatus(error?.message ?? "Remote model download/test failed safely")
       await refreshDiagnostics()
     } finally {
       setBusy(null)
@@ -337,9 +369,30 @@ export default function G2ModelLab() {
         <RNText style={{color: "white", fontSize: 32, fontWeight: "800", marginTop: 18}}>
           G2 MODEL LAB
         </RNText>
-        <RNText style={{color: "#9b8cae", fontSize: 15, marginTop: 6, marginBottom: 24}}>
+        <RNText style={{color: "#9b8cae", fontSize: 15, marginTop: 6, marginBottom: 18}}>
           Offline speech-engine lab · Italian · v{appVersion}
         </RNText>
+
+        <View
+          style={{
+            backgroundColor: "#130C1B",
+            borderWidth: 1,
+            borderColor: "#6D35A8",
+            borderRadius: 18,
+            padding: 16,
+            marginBottom: 18,
+          }}>
+          <RNText style={{color: "#8F7FA3", fontSize: 11, fontWeight: "800", letterSpacing: 1.2}}>
+            CURRENT MODEL
+          </RNText>
+          <RNText style={{color: "white", fontSize: 19, fontWeight: "800", marginTop: 6}}>
+            {currentModel.displayName}
+          </RNText>
+          <RNText style={{color: "#B989FF", marginTop: 6, fontSize: 12}}>
+            {currentModel.custom ? "CUSTOM / DOWNLOADED" : "G2 LABS PRESET"}
+            {currentModel.source ? ` · ${currentModel.source}` : ""}
+          </RNText>
+        </View>
 
         <Card code="it" title="Italian Built-in" sub="Known-good Kroko INT8 · recovery baseline" />
         <Card
@@ -382,10 +435,10 @@ export default function G2ModelLab() {
             borderColor: "#292032",
           }}>
           <RNText style={{color: "white", fontSize: 20, fontWeight: "800"}}>
-            MODEL BROWSER
+            MODEL SEARCH V2
           </RNText>
           <RNText style={{color: "#a99db8", marginTop: 6, marginBottom: 12}}>
-            Live Sherpa GitHub + Hugging Face discovery. Official Sherpa archives can be downloaded into quarantine and tested.
+            Search official Sherpa/GitHub, Hugging Face, whisper.cpp and Vosk sources. Compatible Sherpa packages download + test in-app; other direct packages download into the local model library.
           </RNText>
 
           <TextInput
@@ -416,7 +469,7 @@ export default function G2ModelLab() {
               alignItems: "center",
             }}>
             <RNText style={{color: "white", fontWeight: "800"}}>
-              {browserLoading ? "SEARCHING SOURCES…" : "SEARCH ALL SOURCES"}
+              {browserLoading ? "SEARCHING SOURCES…" : "SEARCH V2"}
             </RNText>
           </Pressable>
 
@@ -424,14 +477,19 @@ export default function G2ModelLab() {
             <RNText style={{color: "#ff829b", marginTop: 10, fontSize: 12}}>{browserError}</RNText>
           )}
 
-          {browserModels.slice(0, 30).map((model) => {
-            const direct = !!model.downloadUrl
+          {browserModels.slice(0, 40).map((model) => {
+            const direct = !!model.downloadUrl || !!model.directFiles?.length
             const badge =
               model.compatibility === "native-likely"
-                ? "🟢 LIKELY NATIVE"
+                ? "🟢 NATIVE CANDIDATE"
                 : model.compatibility === "native-unverified"
                   ? "🟡 QUARANTINE TEST"
                   : "⚪ ADAPTER REQUIRED"
+            const actionLabel = !direct
+              ? "OPEN SOURCE"
+              : model.downloadMode === "test"
+                ? "DOWNLOAD & TEST"
+                : "DOWNLOAD"
 
             return (
               <View
@@ -444,7 +502,7 @@ export default function G2ModelLab() {
                 }}>
                 <RNText style={{color: "white", fontWeight: "800"}}>{model.displayName}</RNText>
                 <RNText style={{color: "#8f7fa3", marginTop: 3, fontSize: 12}}>
-                  {model.source} · {badge}
+                  {model.source} · {badge} · {model.runtime}
                   {typeof model.size === "number" ? ` · ${STT.formatBytes(model.size)}` : ""}
                 </RNText>
                 <RNText style={{color: "#a99db8", marginTop: 5, fontSize: 12}}>{model.detail}</RNText>
@@ -464,9 +522,7 @@ export default function G2ModelLab() {
                         ? progress > 0
                           ? `DOWNLOADING ${progress}%`
                           : "PREPARING…"
-                        : direct
-                          ? "DOWNLOAD & TEST"
-                          : "OPEN MODEL"}
+                        : actionLabel}
                     </RNText>
                   </Pressable>
                   <Pressable
@@ -514,6 +570,23 @@ export default function G2ModelLab() {
             </Pressable>
           ))}
         </View>
+
+        {currentModel.custom && (
+          <View
+            style={{
+              backgroundColor: "#17101F",
+              borderRadius: 16,
+              borderWidth: 1,
+              borderColor: "#49305E",
+              padding: 14,
+              marginBottom: 12,
+            }}>
+            <RNText style={{color: "#B989FF", fontSize: 11, fontWeight: "800"}}>CUSTOM MODEL INSTALLED</RNText>
+            <RNText style={{color: "white", fontSize: 15, fontWeight: "700", marginTop: 5}}>
+              {currentModel.displayName}
+            </RNText>
+          </View>
+        )}
 
         <Pressable
           onPress={() => void importCustom()}
