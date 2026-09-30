@@ -367,13 +367,25 @@ class STTModelManager {
       } catch (error) {
         console.warn("STTModelManager: custom metadata read failed", error)
       }
-      return {code: "custom", displayName: "Custom Sherpa model", path, custom: true}
+      const leaf = path.split("/").pop() || "Sherpa model"
+      return {
+        code: "custom",
+        displayName: leaf === "custom" ? "Custom Sherpa model" : `Custom · ${leaf}`,
+        path,
+        custom: true,
+      }
     }
 
     const code = this.getLanguageFromPath(path)
     const config = this.languages[code]
     if (config) {
-      return {code, displayName: config.displayName, path, custom: false, source: "G2 LABS"}
+      return {
+        code,
+        displayName: code === "it" ? "Italian Built-in · Kroko INT8" : config.displayName,
+        path,
+        custom: false,
+        source: "G2 LABS",
+      }
     }
     return {code, displayName: code || "Unknown model", path, custom: false}
   }
