@@ -126,6 +126,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         // MARK: - Display Commands
 
         AsyncFunction("displayEvent") { (params: [String: Any]) in
+            let displayNs = DispatchTime.now().uptimeNanoseconds
+            G2LabDiagnostics.markDisplay(ns: displayNs)
+            Bridge.log("G2LAB_TRACE T7_NATIVE_DISPLAY ns=\(displayNs)")
             let sdk = await MainActor.run { self.bluetoothSdk() }
             try? await sdk.displayEvent(DisplayEventRequest(values: params))
         }
@@ -255,6 +258,14 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         Function("getMemoryMB") { () -> Double in
             MemoryMonitor.currentMemoryMB()
+        }
+
+        Function("getG2LabDiagnostics") { () -> [String: Any] in
+            G2LabDiagnostics.snapshot()
+        }
+
+        Function("resetG2LabDiagnostics") {
+            G2LabDiagnostics.resetPipeline()
         }
 
         Function("jscSpawn") { (count: Int) -> Int in
@@ -700,9 +711,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("activateSttModel") { (path: String, languageCode: String) -> Bool in
-            return await MainActor.run {
-                DeviceManager.shared.activateSttModel(path: path, languageCode: languageCode)
-            }
+            return await DeviceManager.shared.activateSttModel(path: path, languageCode: languageCode)
         }
 
         AsyncFunction("getSttModelPath") { () -> String in
