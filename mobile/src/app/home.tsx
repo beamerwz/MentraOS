@@ -21,7 +21,8 @@ import {Screen} from "@/components/ignite"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
-import {BgTimer, engine, useRefresh, useSetForeground, useStart} from "@mentra/engine"
+import {BgTimer, engine, SETTINGS, useRefresh, useSetForeground, useSetting, useStart} from "@mentra/engine"
+import {sttModelManager as STT} from "@mentra/engine-host-internal"
 
 const PURPLE = "#A855F7"
 const PURPLE_SOFT = "#C4B5FD"
@@ -82,16 +83,34 @@ export default function G2LabsHome() {
   const setForeground = useSetForeground()
   const [launchingCaptions, setLaunchingCaptions] = useState(false)
   const [launchMessage, setLaunchMessage] = useState("")
+  const [currentModelName, setCurrentModelName] = useState("Loading model…")
+  const [preferredMic] = useSetting<string>(SETTINGS.preferred_mic.key)
   const hasAttemptedInitialConnect = useRef(false)
 
   const glassesStatus = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
   const glassesConnected = glassesStatus.state === "connected"
   const battery =
     typeof glassesStatus.battery === "number" && glassesStatus.battery >= 0 ? glassesStatus.battery : null
+  const caseBattery =
+    typeof glassesStatus.case?.battery === "number" && glassesStatus.case.battery >= 0
+      ? glassesStatus.case.battery
+      : null
+
+  const micLabel =
+    preferredMic === "glasses"
+      ? "Glasses"
+      : preferredMic === "phone"
+        ? "Phone"
+        : preferredMic === "bluetooth"
+          ? "Bluetooth"
+          : "Automatic"
 
   useFocusEffect(
     useCallback(() => {
       BgTimer.setTimeout(() => refreshApps(), 250)
+      void STT.getCurrentModelSummary()
+        .then((summary) => setCurrentModelName(summary.displayName))
+        .catch(() => setCurrentModelName("Model unavailable"))
     }, [refreshApps]),
   )
 
@@ -131,10 +150,15 @@ export default function G2LabsHome() {
     }
   }
 
-  const version = Application.nativeApplicationVersion || "3.1.2"
+  const version = Application.nativeApplicationVersion || "3.1.3"
 
   return (
-    <Screen preset="fixed" style={{backgroundColor: "#050208"}} KeyboardAvoidingViewProps={{enabled: false}}>
+    <Screen
+      preset="fixed"
+      backgroundColor="#050208"
+      style={{backgroundColor: "#050208"}}
+      className="px-0"
+      KeyboardAvoidingViewProps={{enabled: false}}>
       <LinearGradient
         colors={["#050208", "#100619", "#08030D", "#050208"]}
         locations={[0, 0.28, 0.68, 1]}
@@ -175,10 +199,10 @@ export default function G2LabsHome() {
             <G2LabsLogo width={48} height={48} />
             <View>
               <RNText style={{color: "white", fontSize: 25, lineHeight: 28, fontWeight: "900", letterSpacing: 0.3}}>
-                G2 LABS
+                G2 Glasses
               </RNText>
               <RNText style={{color: "#74677F", fontSize: 11, marginTop: 2, letterSpacing: 1.3}}>
-                EXPERIMENTAL GLASSES ENGINE
+                G2 LABS · EXPERIMENTAL ENGINE
               </RNText>
             </View>
           </View>
@@ -249,41 +273,44 @@ export default function G2LabsHome() {
 
           <GlassesStatus />
 
-          <View style={{flexDirection: "row", gap: 12, marginTop: 15}}>
-            <View
-              style={{
-                flex: 1,
-                borderRadius: 17,
-                backgroundColor: "rgba(255,255,255,0.025)",
-                borderWidth: 1,
-                borderColor: "rgba(255,255,255,0.05)",
-                padding: 12,
-              }}>
-              <View style={{flexDirection: "row", alignItems: "center", gap: 7}}>
-                <Bluetooth size={15} color={glassesConnected ? "#4ADE80" : "#806F90"} />
-                <RNText style={{color: "#756981", fontSize: 11, fontWeight: "700"}}>LINK</RNText>
+          <View style={{flexDirection: "row", gap: 8, marginTop: 15}}>
+            {[
+              {
+                label: "LINK",
+                value: glassesConnected ? "Active" : "Offline",
+                icon: <Bluetooth size={14} color={glassesConnected ? "#4ADE80" : "#806F90"} />,
+              },
+              {
+                label: "GLASSES",
+                value: battery === null ? "—" : `${battery}%`,
+                icon: <Activity size={14} color={PURPLE_SOFT} />,
+              },
+              {
+                label: "CASE",
+                value: caseBattery === null ? "—" : `${caseBattery}%`,
+                icon: <Activity size={14} color={PURPLE_SOFT} />,
+              },
+            ].map((item) => (
+              <View
+                key={item.label}
+                style={{
+                  flex: 1,
+                  borderRadius: 15,
+                  backgroundColor: "rgba(255,255,255,0.025)",
+                  borderWidth: 1,
+                  borderColor: "rgba(255,255,255,0.05)",
+                  paddingHorizontal: 10,
+                  paddingVertical: 11,
+                }}>
+                <View style={{flexDirection: "row", alignItems: "center", gap: 5}}>
+                  {item.icon}
+                  <RNText style={{color: "#756981", fontSize: 9, fontWeight: "800"}}>{item.label}</RNText>
+                </View>
+                <RNText style={{color: "white", fontSize: 14, fontWeight: "800", marginTop: 5}}>
+                  {item.value}
+                </RNText>
               </View>
-              <RNText style={{color: "white", fontSize: 15, fontWeight: "800", marginTop: 5}}>
-                {glassesConnected ? "G2 active" : "Disconnected"}
-              </RNText>
-            </View>
-            <View
-              style={{
-                flex: 1,
-                borderRadius: 17,
-                backgroundColor: "rgba(255,255,255,0.025)",
-                borderWidth: 1,
-                borderColor: "rgba(255,255,255,0.05)",
-                padding: 12,
-              }}>
-              <View style={{flexDirection: "row", alignItems: "center", gap: 7}}>
-                <Activity size={15} color={PURPLE_SOFT} />
-                <RNText style={{color: "#756981", fontSize: 11, fontWeight: "700"}}>BATTERY</RNText>
-              </View>
-              <RNText style={{color: "white", fontSize: 15, fontWeight: "800", marginTop: 5}}>
-                {battery === null ? "—" : `${battery}%`}
-              </RNText>
-            </View>
+            ))}
           </View>
         </LinearGradient>
 
@@ -302,13 +329,13 @@ export default function G2LabsHome() {
           />
           <QuickCard
             title="Model Lab"
-            subtitle="Models, browser & benchmark"
+            subtitle={`Selected: ${currentModelName}`}
             icon={<FlaskConical size={24} color="#C084FC" />}
             onPress={() => router.push("/model-lab")}
           />
           <QuickCard
             title="Microphone"
-            subtitle="G2 / phone audio source"
+            subtitle={`Selected: ${micLabel}`}
             icon={<Mic2 size={24} color="#C084FC" />}
             onPress={() => router.push("/miniapps/settings/microphone")}
           />
@@ -371,7 +398,7 @@ export default function G2LabsHome() {
 
         <View style={{alignItems: "center", marginTop: 34}}>
           <RNText style={{color: "#4F4558", fontSize: 10, fontWeight: "700", letterSpacing: 1.4}}>
-            G2 LABS · DARK PURPLE · v{version}
+            G2 Glasses · G2 LABS · v{version}
           </RNText>
         </View>
       </ScrollView>
