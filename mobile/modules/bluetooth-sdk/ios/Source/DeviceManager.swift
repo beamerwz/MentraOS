@@ -1225,7 +1225,6 @@ struct ViewState {
             return false
         }
         STTTools.stageCandidateForActivation(path, languageCode)
-        G2LabDiagnostics.markModel(state: "staged-relaunch", path: path)
         Bridge.log("STT model staged without in-process ORT construction: \(path)")
         return true
         #else
@@ -1250,7 +1249,6 @@ struct ViewState {
         STTTools.stageCandidateForActivation(path, languageCode)
 
         guard let transcriber else {
-            G2LabDiagnostics.markModel(state: "staged-relaunch", path: path)
             Bridge.log("STT model staged: native transcriber object is unavailable until relaunch")
             return true
         }
@@ -1258,13 +1256,11 @@ struct ViewState {
         if transcriber.hasActiveRecognizer {
             // ORT/Sherpa are intentionally single-model-per-process on iOS.
             // Swapping an already-created recognizer caused the previous EXC_BAD_ACCESS.
-            G2LabDiagnostics.markModel(state: "staged-relaunch", path: path)
             Bridge.log("STT model staged for clean-launch activation: \(path)")
             return true
         }
 
         guard transcriber.canInitializeSelectedModelInProcess else {
-            G2LabDiagnostics.markModel(state: "staged-relaunch", path: path)
             Bridge.log("STT model staged while another initialization owns ORT: \(path)")
             return true
         }
@@ -1272,7 +1268,7 @@ struct ViewState {
         // Fresh process with no recognizer created yet: initialize the selected model now,
         // but never on MainActor so model mmap/session creation cannot starve G2 BLE.
         // Mark testing before native ORT construction so even a hard crash is recoverable.
-        STTTools.beginStagedModelTestIfNeeded()
+        STTTools.beginCandidateConstructionIfNeeded()
         G2LabDiagnostics.resetPipeline()
         G2LabDiagnostics.markModel(state: "initializing", path: path)
         let worker = transcriber
