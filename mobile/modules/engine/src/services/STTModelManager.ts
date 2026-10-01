@@ -104,39 +104,19 @@ class STTModelManager {
 
   private readonly modelSourceLinks: ModelSourceLink[] = [
     {
-      name: "Sherpa-ONNX · Recommended",
+      name: "Sherpa-ONNX · Pretrained models",
       url: "https://k2-fsa.github.io/sherpa/onnx/pretrained_models/index.html",
-      detail: "Primary source for models most likely to run directly in G2 Glasses.",
+      detail: "Primary catalog for model families supported by the native G2 Glasses runtime.",
     },
     {
-      name: "Sherpa-ONNX · Direct releases",
+      name: "Sherpa-ONNX · ASR releases",
       url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
-      detail: "Official downloadable .tar.bz2 ASR packages.",
+      detail: "Official downloadable ASR packages; Model Lab validates every package before activation.",
     },
     {
-      name: "Hugging Face · ASR models",
-      url: "https://huggingface.co/models?pipeline_tag=automatic-speech-recognition&sort=trending",
-      detail: "Largest discovery source; Search V2 inspects downloadable files automatically.",
-    },
-    {
-      name: "Hugging Face · Open ASR Leaderboard",
-      url: "https://huggingface.co/spaces/hf-audio/open_asr_leaderboard",
-      detail: "Useful accuracy / WER / speed comparison reference.",
-    },
-    {
-      name: "whisper.cpp · On-device models",
-      url: "https://github.com/ggml-org/whisper.cpp/tree/master/models",
-      detail: "Direct-download Whisper models for the future native runtime adapter.",
-    },
-    {
-      name: "Vosk · Lightweight offline models",
-      url: "https://alphacephei.com/vosk/models",
-      detail: "Very small offline models, including Italian.",
-    },
-    {
-      name: "Gladia · Open STT overview",
-      url: "https://www.gladia.io/blog/best-open-source-speech-to-text-models",
-      detail: "Curated overview of strong modern open speech-recognition families.",
+      name: "Hugging Face · Sherpa-ONNX",
+      url: "https://huggingface.co/models?search=sherpa-onnx%20ASR",
+      detail: "Sherpa-compatible community models only; incompatible runtime families are not curated here.",
     },
   ]
 
