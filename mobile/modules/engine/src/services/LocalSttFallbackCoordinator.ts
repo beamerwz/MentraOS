@@ -23,6 +23,7 @@ class LocalSttFallbackCoordinator {
   private static instance: LocalSttFallbackCoordinator
 
   private hasTranscriptionSubscription = false
+  private hasForceLocalTranscription = false
   private activeLanguage: string | null = null
   /**
    * Default to "cloud is up" so we never accidentally activate local STT before
@@ -89,6 +90,7 @@ class LocalSttFallbackCoordinator {
   onSubscriptionChange(hasTranscription: boolean, language: string | null, hasForceLocal = false): void {
     this.log(`onSubscriptionChange(hasTx=${hasTranscription}, lang=${language}, forceLocal=${hasForceLocal})`)
     this.hasTranscriptionSubscription = hasTranscription
+    this.hasForceLocalTranscription = hasForceLocal
     this.activeLanguage = hasTranscription ? language : null
     void this.reconcile()
   }
@@ -185,7 +187,7 @@ class LocalSttFallbackCoordinator {
     // transcription stream, so native Sherpa must stand down completely.
     if (process.env.EXPO_PUBLIC_G2_LABS === "1") {
       const engine = String(useSettingsStore.getState().getSetting("g2_offline_engine") ?? "sherpa")
-      if (engine.startsWith("whisper_")) return false
+      if (engine.startsWith("whisper_") && this.hasForceLocalTranscription) return false
     }
 
     // G2 LABS is offline-first. A local transcription subscription otherwise
