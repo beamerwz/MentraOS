@@ -4,10 +4,12 @@ class STTTools {
     private static let nemotronMarker = ".g2labs-nemotron-v2"
     private static var stagedModel: (path: String, languageCode: String)?
 
-    // Two-phase activation guard for untrusted/custom models.
-    // staged -> next clean launch marks testing -> recognizer smoke test must clear it.
-    // If the process dies while state == testing, the next launch automatically
-    // restores the last model that completed a native smoke test.
+    // Crash guard for untrusted/custom models.
+    // staged -> constructing -> loaded -> testing -> proven.
+    //
+    // Important: a model is NOT trusted just because ONNX sessions were created.
+    // We only clear the guard after a real live decoder pass returns successfully.
+    // This catches hard native crashes such as NeMo RunDecoder heap corruption.
     private static let activationStateKey = "G2LabsSTTActivationState"
     private static let candidatePathKey = "G2LabsSTTCandidatePath"
     private static let candidateLanguageKey = "G2LabsSTTCandidateLanguage"
@@ -17,6 +19,8 @@ class STTTools {
 
     private enum ActivationState: String {
         case staged
+        case constructing
+        case loaded
         case testing
     }
 
@@ -147,19 +151,51 @@ class STTTools {
         defaults.synchronize()
     }
 
-    /// Called immediately before attempting candidate construction in the same
-    /// process. Clean-launch candidates are transitioned in recovery below.
-    static func beginStagedModelTestIfNeeded() {
+    /// Arm the crash guard immediately before native ORT/Sherpa construction.
+    /// If the process dies while constructing, the next launch rolls back.
+    static func beginCandidateConstructionIfNeeded() {
         let defaults = UserDefaults.standard
-        guard defaults.string(forKey: activationStateKey) == ActivationState.staged.rawValue else {
+        let state = defaults.string(forKey: activationStateKey)
+        guard state == ActivationState.staged.rawValue || state == ActivationState.loaded.rawValue else {
+            return
+        }
+        defaults.set(ActivationState.constructing.rawValue, forKey: activationStateKey)
+        defaults.synchronize()
+    }
+
+    /// Native construction + bounded smoke test succeeded, but the model has not
+    /// yet survived a real streaming decoder pass. Keep the rollback guard armed.
+    static func markCandidateLoadedAwaitingLiveDecode() {
+        let defaults = UserDefaults.standard
+        guard defaults.string(forKey: activationStateKey) == ActivationState.constructing.rawValue else {
+            return
+        }
+        defaults.set(ActivationState.loaded.rawValue, forKey: activationStateKey)
+        defaults.synchronize()
+    }
+
+    /// Mark the narrow risky window immediately before a real live decode.
+    /// A SIGTRAP / EXC_BAD_ACCESS / malloc abort during decoder execution leaves
+    /// this marker behind so the next clean launch restores the previous model.
+    static func armCandidateLiveDecodeIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard defaults.string(forKey: activationStateKey) == ActivationState.loaded.rawValue else {
             return
         }
         defaults.set(ActivationState.testing.rawValue, forKey: activationStateKey)
         defaults.synchronize()
     }
 
-    /// A real native smoke test + stream recreation completed. The current
-    /// selection is now safe enough to become the new rollback point.
+    /// A real decoder call returned successfully. The candidate has now passed
+    /// the failure mode that structural validation and startup smoke tests miss.
+    static func markCandidateLiveDecodeSucceeded() {
+        let defaults = UserDefaults.standard
+        guard defaults.string(forKey: activationStateKey) == ActivationState.testing.rawValue else {
+            return
+        }
+        markCurrentModelReady()
+    }
+
     static func markCurrentModelReady() {
         let defaults = UserDefaults.standard
         let path = defaults.string(forKey: "STTModelPath") ?? ""
@@ -196,19 +232,17 @@ class STTTools {
         let defaults = UserDefaults.standard
         let state = defaults.string(forKey: activationStateKey)
 
-        // A previous launch reached the risky native construction phase but
-        // never reported readiness. Treat that as a failed/crashed candidate.
-        if state == ActivationState.testing.rawValue {
-            _ = restoreLastKnownGood(reason: "previous candidate did not finish native activation")
+        // A previous process died either while creating ORT/Sherpa state or
+        // inside a real live decoder call. Both are hard-crash zones that Swift
+        // cannot catch, so restore the last model proven by a successful decode.
+        if state == ActivationState.constructing.rawValue || state == ActivationState.testing.rawValue {
+            _ = restoreLastKnownGood(reason: "previous candidate crashed during native activation/decode")
             return
         }
 
-        // First clean launch after staging: arm the crash detector BEFORE ONNX
-        // Runtime is touched. A hard native crash leaves this marker behind.
-        if state == ActivationState.staged.rawValue {
-            defaults.set(ActivationState.testing.rawValue, forKey: activationStateKey)
-            defaults.synchronize()
-        }
+        // staged / loaded are retryable states. "loaded" means the prior process
+        // exited before any real live decode occurred; that is not evidence of a
+        // bad model, so do not falsely roll it back.
 
         guard let modelPath = defaults.string(forKey: "STTModelPath") else { return }
         if !validateSTTModel(modelPath) {
