@@ -287,13 +287,13 @@ export default function G2LabsHome() {
               },
               {
                 label: "GLASSES",
-                value: battery === null ? "—" : `${batteryEmoji(battery)} ${battery}%`,
-                icon: <Activity size={14} color={PURPLE_SOFT} />,
+                value: battery === null ? "—" : `${battery}%`,
+                icon: <RNText style={{fontSize: 15}}>{batteryEmoji(battery)}</RNText>,
               },
               {
                 label: "CASE",
-                value: caseBattery === null ? "—" : `${batteryEmoji(caseBattery)} ${caseBattery}%`,
-                icon: <Activity size={14} color={PURPLE_SOFT} />,
+                value: caseBattery === null ? "—" : `${caseBattery}%`,
+                icon: <RNText style={{fontSize: 15}}>{batteryEmoji(caseBattery)}</RNText>,
               },
             ].map((item) => (
               <View
