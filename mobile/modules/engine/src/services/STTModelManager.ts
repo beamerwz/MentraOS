@@ -926,6 +926,8 @@ class STTModelManager {
     languageCode = "it-IT",
     displayName = "Custom Sherpa model",
   ): Promise<ModelActivationResult> {
+    const blockedReason = this.nativeSafetyBlock(displayName, sourcePath)
+    if (blockedReason) throw new Error(blockedReason)
     const safeName = this.safeCatalogId(displayName.replace(/\.tar\.bz2$/i, ""))
     const destination = `${this.getLibraryDirectory()}/import-${safeName}-${Date.now()}`
     await RNFS.mkdir(this.getLibraryDirectory(), {NSURLIsExcludedFromBackupKey: true})
