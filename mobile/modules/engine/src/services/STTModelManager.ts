@@ -126,17 +126,7 @@ class STTModelManager {
     {
       name: "whisper.cpp · On-device models",
       url: "https://github.com/ggml-org/whisper.cpp/tree/master/models",
-      detail: "Direct-download Whisper models for the future native runtime adapter.",
-    },
-    {
-      name: "Vosk · Lightweight offline models",
-      url: "https://alphacephei.com/vosk/models",
-      detail: "Very small offline models, including Italian.",
-    },
-    {
-      name: "Gladia · Open STT overview",
-      url: "https://www.gladia.io/blog/best-open-source-speech-to-text-models",
-      detail: "Curated overview of strong modern open speech-recognition families.",
+      detail: "Native GGML Whisper models supported by the bundled whisper.cpp runtime.",
     },
   ]
 
@@ -1063,7 +1053,8 @@ class STTModelManager {
       }
     }
 
-    return Promise.all(models.slice(0, 18).map((model) => inspect(model)))
+    const inspected = await Promise.all(models.slice(0, 18).map((model) => inspect(model)))
+    return inspected.filter((model) => model.runtime === "sherpa-onnx" && model.downloadMode === "test")
   }
 
   private async fetchWhisperCppCatalog(query: string): Promise<RemoteCatalogModel[]> {
@@ -1085,10 +1076,10 @@ class STTModelManager {
         fileName: file.name,
         size: file.size,
         languageCode: "it",
-        compatibility: "adapter-required",
+        compatibility: "native-likely",
         runtime: "whisper.cpp",
         downloadMode: "store",
-        detail: "Direct GGML download · stored locally now; whisper.cpp runtime adapter required to run it",
+        detail: "Direct GGML download · native whisper.cpp iOS runtime included",
         tags: ["whisper.cpp", "ggml", "offline"],
       }))
   }
@@ -1139,7 +1130,7 @@ class STTModelManager {
       this.fetchWhisperCppCatalog(query),
     ])
 
-    const result: RemoteCatalogModel[] = [...this.fetchVoskCatalog(query)]
+    const result: RemoteCatalogModel[] = []
     if (sherpa.status === "fulfilled") result.push(...sherpa.value)
     if (huggingFace.status === "fulfilled") result.push(...huggingFace.value)
     if (whisperCpp.status === "fulfilled") result.push(...whisperCpp.value)
@@ -1345,7 +1336,7 @@ class STTModelManager {
       id: model.id,
       runtime: model.runtime,
       languageCode: model.languageCode,
-      runnable: model.runtime === "sherpa-onnx",
+      runnable: model.runtime === "sherpa-onnx" || model.runtime === "whisper.cpp",
     })
     return destination
   }
