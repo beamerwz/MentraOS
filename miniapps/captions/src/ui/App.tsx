@@ -126,6 +126,7 @@ export function App() {
               accentColor={presentation.accentColor}
               accentForeground={presentation.accentForeground}
               onUpdateUseOfflineStt={updateUseOfflineStt}
+              onOpenLanguageSelector={() => setShowLanguageSelector(true)}
               onUpdateDisplayLines={updateDisplayLines}
               onUpdateDisplayWidth={updateDisplayWidth}
               onUpdateCaptionPosition={updateCaptionPosition}
