@@ -1,5 +1,7 @@
 import "react-native-get-random-values" // Must be first - required for tweetnacl crypto (UDP encryption)
 import "@/utils/polyfills/event" // Must be before any livekit imports
+import {initExecutorch} from "react-native-executorch"
+import {ExpoResourceFetcher} from "react-native-executorch-expo-resource-fetcher"
 // import {registerGlobals} from "@livekit/react-native-webrtc"
 import * as Sentry from "@sentry/react-native"
 import {useFonts} from "expo-font"
@@ -18,6 +20,8 @@ import {AllEffects} from "@/effects/AllEffects"
 import {AllProviders} from "@/contexts/AllProviders"
 import "@/global.css"
 import {logBuffer} from "@mentra/engine-host-internal"
+
+initExecutorch({resourceFetcher: ExpoResourceFetcher})
 
 SentrySetup()
 logBuffer.startConsoleInterception()
