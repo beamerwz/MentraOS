@@ -78,14 +78,15 @@ interface TranscriptEntry {
 }
 
 // ── Settings defaults (mirror SettingsManager) ─────────────────────────────
-// The G2 LABS IPA has no cloud account/token. Its Captions bundle is built with
-// MENTRA_PUBLIC_G2_LABS=1, so transcription must never silently route to cloud.
-const G2_LABS_FORCE_LOCAL = process.env.MENTRA_PUBLIC_G2_LABS === "1"
+// G2 LABS defaults to local/offline STT so captions work with zero login.
+// Users can explicitly select Mentra Cloud. When cloud is unavailable,
+// TranscriptionRouting automatically keeps the local route alive as fallback.
+const G2_LABS_DEFAULT_LOCAL = process.env.MENTRA_PUBLIC_G2_LABS === "1"
 
 const DEFAULT_SETTINGS: CaptionSettings = {
   language: "auto",
   languageHints: [],
-  useOfflineStt: G2_LABS_FORCE_LOCAL,
+  useOfflineStt: G2_LABS_DEFAULT_LOCAL,
   displayLines: 3,
   displayWidth: 1, // 0=Narrow, 1=Medium, 2=Wide
   captionPosition: "top",
@@ -406,11 +407,8 @@ export class CaptionsController {
         }
       })()
 
-      this.settings.useOfflineStt = G2_LABS_FORCE_LOCAL
-        ? true
-        : useOfflineSttRaw == null
-          ? DEFAULT_SETTINGS.useOfflineStt
-          : useOfflineSttRaw === "true"
+      this.settings.useOfflineStt =
+        useOfflineSttRaw == null ? DEFAULT_SETTINGS.useOfflineStt : useOfflineSttRaw === "true"
 
       this.settings.displayLines = (() => {
         if (!linesRaw) return 3
@@ -456,9 +454,8 @@ export class CaptionsController {
   }
 
   private async setUseOfflineStt(enabled: boolean): Promise<void> {
-    const effective = G2_LABS_FORCE_LOCAL ? true : enabled
-    this.settings.useOfflineStt = effective
-    await this.persist(STORAGE_KEYS.useOfflineStt, effective.toString())
+    this.settings.useOfflineStt = enabled
+    await this.persist(STORAGE_KEYS.useOfflineStt, enabled.toString())
     this.subscribeTranscription()
     this.broadcastSettings()
   }
@@ -549,7 +546,7 @@ export class CaptionsController {
 
     const language = this.settings.language
     const hints = this.settings.languageHints
-    const options = G2_LABS_FORCE_LOCAL || this.settings.useOfflineStt ? {forceLocal: true} : {}
+    const options = this.settings.useOfflineStt ? {forceLocal: true} : {}
 
     try {
       if (hints.length > 0) {
