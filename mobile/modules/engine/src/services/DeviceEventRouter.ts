@@ -30,6 +30,7 @@ import {useAppStatusStore} from "../stores/apps"
 import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
+import g2SpeechQuickMenu from "./G2SpeechQuickMenu"
 import {G2_SPEECH_MENU_PACKAGE} from "./G2SpeechQuickMenuConstants"
 
 let subs: Array<{remove: () => void}> = []
@@ -235,13 +236,17 @@ export function startDeviceEventRouter(): void {
   )
   subs.push(
     BluetoothSdk.addListener("touch_event", (event) => {
+      // While the on-glasses Captions engine submenu is open, its swipe/tap
+      // gestures are consumed here and never leak into a paused miniapp.
+      if (g2SpeechQuickMenu.handleTouch(event)) return
+
       if (process.env.EXPO_PUBLIC_G2_LABS === "1" && event.gestureName === "double_tap") {
         const captionsRunning =
           useAppStatusStore.getState().apps.find((app) => app.packageName === G2_CAPTIONS_PACKAGE)?.running === true
 
-        // Native G2 owns double-tap as the app/dashboard gesture. When Captions
-        // is already active, the second double-tap becomes a clean STOP + CLOSE.
-        // When it is inactive, native opens the dashboard containing "Captions".
+        // Native G2 owns the first double tap as dashboard open. While Captions
+        // is active native suppresses that dashboard and this same event becomes
+        // STOP + CLOSE.
         if (captionsRunning) void toggleG2CaptionsFromGlasses()
         return
       }
@@ -287,10 +292,10 @@ export function startDeviceEventRouter(): void {
       if (!packageName) return
 
       if (packageName === G2_SPEECH_MENU_PACKAGE) {
-        // Synthetic native dashboard item. Selecting "Captions" starts the
-        // bundled app headlessly with the user's current Cloud/Offline choice.
-        // Selecting it again also behaves as a toggle.
-        void toggleG2CaptionsFromGlasses()
+        // The native dashboard item is named "Captions". Selecting it opens a
+        // second-level on-glasses engine chooser: Mentra Cloud, Sherpa, or
+        // ExecuTorch Whisper Tiny/Base/Small.
+        void g2SpeechQuickMenu.open()
         return
       }
 
