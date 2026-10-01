@@ -149,3 +149,38 @@ select,
 .dark body {
   background: #0b0b0d;
 }
+
+
+/* G2 Glasses build: visually integrate the local Captions WebView into the
+   dark-purple host shell while keeping the proven background/runtime intact. */
+.g2labs-captions {
+  --background: #050208;
+  --foreground: #ffffff;
+  --card: #100b16;
+  --card-foreground: #ffffff;
+  --popover: #100b16;
+  --popover-foreground: #ffffff;
+  --primary: #6d35a8;
+  --primary-foreground: #ffffff;
+  --secondary: #17101f;
+  --secondary-foreground: #ffffff;
+  --muted: #17101f;
+  --muted-foreground: #9b8cae;
+  --accent: #211332;
+  --accent-foreground: #ffffff;
+  --border: #2d2039;
+  --input: #392b49;
+  --ring: #a855f7;
+  background: #050208 !important;
+  color: #ffffff !important;
+}
+
+.g2labs-captions,
+.g2labs-captions > div {
+  background-color: #050208 !important;
+}
+
+.g2labs-captions button:focus-visible,
+.g2labs-captions input:focus {
+  outline-color: #a855f7 !important;
+}
