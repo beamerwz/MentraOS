@@ -18,9 +18,15 @@ const BORDER = "#2D2039"
 
 type WhisperChoice = "tiny" | "base" | "small"
 
-function pcm16ToFloat32(input: ArrayBuffer): Float32Array {
-  const view = new DataView(input)
-  const samples = new Float32Array(Math.floor(input.byteLength / 2))
+function pcm16ToFloat32(input: ArrayBuffer | ArrayBufferView | number[]): Float32Array {
+  const bytes =
+    input instanceof ArrayBuffer
+      ? new Uint8Array(input)
+      : ArrayBuffer.isView(input)
+        ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+        : Uint8Array.from(input)
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  const samples = new Float32Array(Math.floor(bytes.byteLength / 2))
   for (let i = 0; i < samples.length; i += 1) {
     samples[i] = view.getInt16(i * 2, true) / 32768
   }
@@ -33,7 +39,11 @@ export default function RuntimeLab() {
   const [committedText, setCommittedText] = useState("")
   const [partialText, setPartialText] = useState("")
   const [message, setMessage] = useState("Choose a Whisper model, wait for READY, then test it with the G2 microphone.")
+  const [pcmPackets, setPcmPackets] = useState(0)
+  const [pcmBytes, setPcmBytes] = useState(0)
   const pcmSubscription = useRef<{remove: () => void} | null>(null)
+  const pcmPacketCount = useRef(0)
+  const pcmByteCount = useRef(0)
 
   const model = useMemo(() => {
     if (choice === "base") return WHISPER_BASE
@@ -46,6 +56,7 @@ export default function RuntimeLab() {
   const stop = () => {
     pcmSubscription.current?.remove()
     pcmSubscription.current = null
+    void BluetoothSdk.updateBluetoothSettings({should_send_pcm: false})
     try {
       whisper.streamStop()
     } catch {
@@ -71,14 +82,33 @@ export default function RuntimeLab() {
 
       setCommittedText("")
       setPartialText("")
+      pcmPacketCount.current = 0
+      pcmByteCount.current = 0
+      setPcmPackets(0)
+      setPcmBytes(0)
       const stream = whisper.stream({language: "it"})
       pcmSubscription.current = BluetoothSdk.addListener("mic_pcm", (event) => {
         try {
-          whisper.streamInsert(pcm16ToFloat32(event.pcm))
-        } catch {
-          // The first packet can race stream initialization; later packets continue normally.
+          const samples = pcm16ToFloat32(event.pcm)
+          pcmPacketCount.current += 1
+          pcmByteCount.current += samples.length * 2
+          if (pcmPacketCount.current === 1) {
+            setMessage("PCM LIVE · Whisper is receiving the G2 microphone.")
+          }
+          if (pcmPacketCount.current % 20 === 0 || pcmPacketCount.current === 1) {
+            setPcmPackets(pcmPacketCount.current)
+            setPcmBytes(pcmByteCount.current)
+          }
+          whisper.streamInsert(samples)
+        } catch (error) {
+          setMessage(`PCM received but Whisper insert failed: ${error instanceof Error ? error.message : String(error)}`)
         }
       })
+      setTimeout(() => {
+        if (pcmSubscription.current && pcmPacketCount.current === 0) {
+          setMessage("NO PCM RECEIVED · microphone routing did not start.")
+        }
+      }, 2000)
       void (async () => {
         try {
           for await (const update of stream) {
@@ -178,6 +208,9 @@ export default function RuntimeLab() {
 
           <RNText style={{color: "#8F819B", fontSize: 11, lineHeight: 17, marginTop: 12}}>
             {message}
+          </RNText>
+          <RNText style={{color: SOFT, fontSize: 10, marginTop: 6}}>
+            PCM packets: {pcmPackets} · audio bytes: {pcmBytes}
           </RNText>
 
           <View style={{backgroundColor: "#08060B", borderRadius: 14, padding: 13, marginTop: 12, minHeight: 120}}>
