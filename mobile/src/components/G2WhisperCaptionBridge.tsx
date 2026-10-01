@@ -50,12 +50,18 @@ function pcm16ToFloat32(input: ArrayBuffer | ArrayBufferView | number[]): Float3
  * so the two decoders never compete for the same local caption stream.
  */
 export function G2WhisperCaptionBridge() {
+  const engine = useSettingsStore((state) => state.getSetting("g2_offline_engine"))
+  if (process.env.EXPO_PUBLIC_G2_LABS !== "1" || !isWhisperEngine(engine)) return null
+
+  // A keyed child gives ExecuTorch a clean hook lifecycle when switching
+  // Tiny/Base/Small instead of asking one hook instance to hot-swap models.
+  return <ActiveWhisperBridge key={engine} whisperEngine={engine} />
+}
+
+function ActiveWhisperBridge({whisperEngine}: {whisperEngine: WhisperEngine}) {
   const captionsRunning = useAppStatusStore(
     (state) => state.apps.find((app) => app.packageName === CAPTIONS_PACKAGE)?.running === true,
   )
-  const engine = useSettingsStore((state) => state.getSetting("g2_offline_engine"))
-  const whisperEngine: WhisperEngine | null = isWhisperEngine(engine) ? engine : null
-
   const [offlineSelected, setOfflineSelected] = useState(true)
   const [captionLanguage, setCaptionLanguage] = useState("auto")
 
@@ -65,11 +71,9 @@ export function G2WhisperCaptionBridge() {
     return WHISPER_TINY
   }, [whisperEngine])
 
-  // Do not fetch/load ExecuTorch resources at all unless the user actually
-  // selected a Whisper backend.
   const whisper = useSpeechToText({
     model,
-    preventLoad: whisperEngine == null,
+    preventLoad: false,
   })
 
   const pcmSubscription = useRef<{remove: () => void} | null>(null)
@@ -81,8 +85,6 @@ export function G2WhisperCaptionBridge() {
   // Polling is intentional here: phone UI, glasses submenu, and background
   // miniapp can all mutate that storage independently.
   useEffect(() => {
-    if (process.env.EXPO_PUBLIC_G2_LABS !== "1") return
-
     let alive = true
     const refresh = async () => {
       try {
@@ -109,9 +111,7 @@ export function G2WhisperCaptionBridge() {
   }, [])
 
   useEffect(() => {
-    if (process.env.EXPO_PUBLIC_G2_LABS !== "1") return
-
-    const shouldRun = captionsRunning && offlineSelected && whisperEngine != null
+    const shouldRun = captionsRunning && offlineSelected
 
     const stop = () => {
       generation.current += 1
