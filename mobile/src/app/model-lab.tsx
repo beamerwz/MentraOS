@@ -166,6 +166,7 @@ export default function G2ModelLab() {
   const [browserModels, setBrowserModels] = useState<RemoteCatalogModel[]>([])
   const [browserLoading, setBrowserLoading] = useState(false)
   const [browserError, setBrowserError] = useState("")
+  const [sourcesOpen, setSourcesOpen] = useState(false)
   const [installedModels, setInstalledModels] = useState<InstalledModelEntry[]>([])
   const [presetDownloaded, setPresetDownloaded] = useState<Record<string, boolean>>({})
   const [currentModel, setCurrentModel] = useState<CurrentModelSummary>({
@@ -260,7 +261,9 @@ export default function G2ModelLab() {
   )
 
   const runtimeState = modelStateLabel(diagnostics.modelState)
-  const appVersion = Application.nativeApplicationVersion || "3.1.4"
+  const appVersion = Application.nativeApplicationVersion || "3.1.5"
+  const readyLibraryModels = installedModels.filter((entry) => entry.runnable)
+  const downloadedFiles = installedModels.filter((entry) => !entry.runnable)
 
   const activate = async (code: string) => {
     try {
@@ -505,12 +508,12 @@ export default function G2ModelLab() {
           MY MODEL LIBRARY
         </RNText>
         <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, padding: 14}}>
-          {installedModels.length === 0 ? (
+          {readyLibraryModels.length === 0 ? (
             <RNText style={{color: "#7F708C", fontSize: 13}}>
-              No custom/downloaded models yet. Models you import or download will stay here until you delete them.
+              No custom/downloaded runnable models yet. Imported or compatible Sherpa models stay here until you delete them.
             </RNText>
           ) : (
-            installedModels.map((entry, index) => (
+            readyLibraryModels.map((entry, index) => (
               <View
                 key={entry.path}
                 style={{
@@ -520,9 +523,11 @@ export default function G2ModelLab() {
                 }}>
                 <View style={{flexDirection: "row", alignItems: "center", gap: 10}}>
                   <View style={{flex: 1}}>
-                    <RNText style={{color: "white", fontWeight: "800", fontSize: 14}}>{entry.displayName}</RNText>
+                    <RNText style={{color: "white", fontWeight: "800", fontSize: 14}} numberOfLines={2}>
+                      {entry.displayName}
+                    </RNText>
                     <RNText style={{color: "#8F819B", fontSize: 11, marginTop: 4}}>
-                      {entry.source} · {entry.runtime} · {entry.runnable ? "Ready" : "Adapter required"}
+                      {entry.source} · {entry.runtime}
                     </RNText>
                   </View>
                   {entry.current && (
@@ -531,14 +536,12 @@ export default function G2ModelLab() {
                     </View>
                   )}
                 </View>
-                <View style={{flexDirection: "row", gap: 8, marginTop: 10}}>
-                  {entry.runnable && (
-                    <ActionButton
-                      label={entry.current ? "SELECTED" : busy === `library:${entry.id}` ? "LOADING…" : "USE"}
-                      onPress={() => void useInstalled(entry)}
-                      disabled={!!busy || entry.current}
-                    />
-                  )}
+                <View style={{flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap"}}>
+                  <ActionButton
+                    label={entry.current ? "SELECTED" : busy === `library:${entry.id}` ? "LOADING…" : "USE"}
+                    onPress={() => void useInstalled(entry)}
+                    disabled={!!busy || entry.current}
+                  />
                   {entry.sourceUrl ? (
                     <ActionButton label="SOURCE" secondary onPress={() => void Linking.openURL(entry.sourceUrl!)} />
                   ) : null}
@@ -557,7 +560,7 @@ export default function G2ModelLab() {
             onPress={() => void importCustom()}
             disabled={!!busy}
             style={{
-              marginTop: installedModels.length ? 10 : 14,
+              marginTop: readyLibraryModels.length ? 10 : 14,
               borderWidth: 1,
               borderColor: "#68418B",
               backgroundColor: "#211332",
@@ -565,16 +568,51 @@ export default function G2ModelLab() {
               padding: 13,
             }}>
             <RNText style={{color: "white", fontWeight: "800"}}>＋ Import Sherpa .tar.bz2</RNText>
-            <RNText style={{color: "#9E8DAE", fontSize: 11, marginTop: 4}}>Installs, validates, selects, and keeps it in your library.</RNText>
+            <RNText style={{color: "#9E8DAE", fontSize: 11, marginTop: 4}}>
+              Extracts, validates, selects, and keeps the model here so you can reapply or delete it later.
+            </RNText>
           </Pressable>
         </View>
+
+        {downloadedFiles.length > 0 && (
+          <>
+            <RNText style={{color: "#8F7FA3", fontSize: 11, fontWeight: "900", letterSpacing: 1.2, marginTop: 18, marginBottom: 8}}>
+              DOWNLOADED FILES · RUNTIME NOT INSTALLED
+            </RNText>
+            <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, padding: 14}}>
+              {downloadedFiles.map((entry, index) => (
+                <View
+                  key={entry.path}
+                  style={{paddingVertical: 11, borderTopWidth: index === 0 ? 0 : 1, borderTopColor: "#241A2D"}}>
+                  <RNText style={{color: "white", fontWeight: "800", fontSize: 13}} numberOfLines={2}>
+                    {entry.displayName}
+                  </RNText>
+                  <RNText style={{color: "#756981", fontSize: 11, marginTop: 4}}>
+                    {entry.runtime} · downloaded only · cannot be selected yet
+                  </RNText>
+                  <View style={{flexDirection: "row", gap: 8, marginTop: 9}}>
+                    {entry.sourceUrl ? (
+                      <ActionButton label="SOURCE" secondary onPress={() => void Linking.openURL(entry.sourceUrl!)} />
+                    ) : null}
+                    <ActionButton
+                      label={busy === `delete:${entry.id}` ? "DELETING…" : "DELETE"}
+                      danger
+                      onPress={() => deleteInstalled(entry)}
+                      disabled={!!busy}
+                    />
+                  </View>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
 
         <RNText style={{color: "#B9A6C8", fontSize: 12, fontWeight: "900", letterSpacing: 1.2, marginTop: 26, marginBottom: 10}}>
           SEARCH MODELS
         </RNText>
         <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, padding: 14}}>
           <RNText style={{color: "#8F819B", fontSize: 12, lineHeight: 17, marginBottom: 10}}>
-            Search official Sherpa releases, Hugging Face, whisper.cpp and Vosk. Compatible Sherpa models install + activate immediately; other runtimes are saved to your library.
+            Search official Sherpa releases and selected model hubs. Compatible Sherpa models install + activate immediately; other runtimes stay clearly separated as download-only files.
           </RNText>
           <TextInput
             value={browserQuery}
@@ -639,20 +677,41 @@ export default function G2ModelLab() {
           })}
         </View>
 
-        <RNText style={{color: "#B9A6C8", fontSize: 12, fontWeight: "900", letterSpacing: 1.2, marginTop: 26, marginBottom: 10}}>
-          CURATED SOURCES
-        </RNText>
-        <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, overflow: "hidden"}}>
-          {sourceLinks.map((source, index) => (
-            <Pressable
-              key={source.url}
-              onPress={() => void Linking.openURL(source.url)}
-              style={{padding: 14, borderTopWidth: index === 0 ? 0 : 1, borderTopColor: "#241A2D"}}>
-              <RNText style={{color: PURPLE_SOFT, fontWeight: "800", fontSize: 13}}>{source.name} ↗</RNText>
-              <RNText style={{color: "#756981", fontSize: 11, marginTop: 3}}>{source.detail}</RNText>
-            </Pressable>
-          ))}
-        </View>
+        <Pressable
+          onPress={() => setSourcesOpen((value) => !value)}
+          style={{
+            marginTop: 22,
+            backgroundColor: CARD,
+            borderWidth: 1,
+            borderColor: BORDER,
+            borderRadius: 18,
+            padding: 15,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}>
+          <View style={{flex: 1}}>
+            <RNText style={{color: "white", fontSize: 14, fontWeight: "900"}}>Curated open-source model sources</RNText>
+            <RNText style={{color: "#756981", fontSize: 11, marginTop: 4}}>
+              Tap to {sourcesOpen ? "hide" : "open"} {sourceLinks.length} trusted sources.
+            </RNText>
+          </View>
+          <RNText style={{color: PURPLE_SOFT, fontSize: 20, fontWeight: "700"}}>{sourcesOpen ? "⌃" : "⌄"}</RNText>
+        </Pressable>
+
+        {sourcesOpen && (
+          <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 18, overflow: "hidden", marginTop: 8}}>
+            {sourceLinks.map((source, index) => (
+              <Pressable
+                key={source.url}
+                onPress={() => void Linking.openURL(source.url)}
+                style={{padding: 14, borderTopWidth: index === 0 ? 0 : 1, borderTopColor: "#241A2D"}}>
+                <RNText style={{color: PURPLE_SOFT, fontWeight: "800", fontSize: 13}}>{source.name} ↗</RNText>
+                <RNText style={{color: "#756981", fontSize: 11, marginTop: 3}}>{source.detail}</RNText>
+              </Pressable>
+            ))}
+          </View>
+        )}
 
         {busy && <ActivityIndicator style={{marginTop: 18}} color={PURPLE_SOFT} />}
         <RNText style={{color: PURPLE_SOFT, marginTop: 14, lineHeight: 19}}>{status}</RNText>
