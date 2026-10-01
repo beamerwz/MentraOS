@@ -370,20 +370,21 @@ export default function G2LabsHome() {
                   backgroundColor: "rgba(255,255,255,0.025)",
                   borderWidth: 1,
                   borderColor: "rgba(255,255,255,0.05)",
-                  paddingHorizontal: 8,
+                  paddingHorizontal: 6,
                   paddingVertical: 11,
                   alignItems: "center",
                   justifyContent: "center",
+                  minHeight: 72,
                 }}>
-                <View style={{flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, width: "100%"}}>
+                <View style={{flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4, width: "100%"}}>
                   {item.icon}
-                  <RNText style={{color: "#756981", fontSize: 9, fontWeight: "800", textAlign: "center"}}>{item.label}</RNText>
+                  <RNText style={{color: "#756981", fontSize: 9, fontWeight: "800", textAlign: "center", width: "100%"}}>{item.label}</RNText>
                 </View>
                 <RNText
                   numberOfLines={2}
                   adjustsFontSizeToFit
                   minimumFontScale={0.72}
-                  style={{color: "white", fontSize: 14, fontWeight: "800", marginTop: 5, textAlign: "center", width: "100%"}}>
+                  style={{color: "white", fontSize: 13, lineHeight: 16, fontWeight: "800", marginTop: 5, textAlign: "center", width: "100%"}}>
                   {item.value}
                 </RNText>
               </View>
