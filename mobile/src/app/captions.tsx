@@ -17,6 +17,7 @@ import {
   localMiniappRuntime,
   sttModelManager as STT,
   useCloudClientStatusStore,
+  useSettingsStore,
 } from "@mentra/engine-host-internal"
 import type {CurrentModelSummary, InstalledModelEntry} from "@mentra/engine-host-internal"
 
@@ -43,6 +44,7 @@ export default function G2IntegratedCaptions() {
   const [requestedCloud, setRequestedCloud] = useState(false)
   const cloudStatus = useCloudClientStatusStore((state) => state.status)
   const cloudAudioTransport = useCloudClientStatusStore((state) => state.audioTransport)
+  const offlineEngine = String(useSettingsStore((state) => state.getSetting("g2_offline_engine")) ?? "sherpa")
   const [currentModel, setCurrentModel] = useState<CurrentModelSummary>({
     code: "",
     displayName: "Loading model…",
@@ -148,7 +150,16 @@ export default function G2IntegratedCaptions() {
 
   const effectiveSpeechRoute = useMemo(() => {
     if (!requestedCloud) {
-      return {label: "OFFLINE", detail: "On-device Sherpa", color: "#C4B5FD"}
+      if (offlineEngine === "whisper_tiny") {
+        return {label: "WHISPER TINY", detail: "ExecuTorch · on-device", color: "#6FE3A5"}
+      }
+      if (offlineEngine === "whisper_base") {
+        return {label: "WHISPER BASE", detail: "ExecuTorch · on-device", color: "#6FE3A5"}
+      }
+      if (offlineEngine === "whisper_small") {
+        return {label: "WHISPER SMALL", detail: "ExecuTorch · on-device", color: "#6FE3A5"}
+      }
+      return {label: "SHERPA OFFLINE", detail: "Sherpa-ONNX · on-device", color: "#C4B5FD"}
     }
 
     if (cloudAudioTransport === "ws" || cloudAudioTransport === "udp") {
@@ -164,7 +175,7 @@ export default function G2IntegratedCaptions() {
     }
 
     return {label: "CLOUD", detail: cloudStatus === "connected" ? "Mentra Cloud" : "Waiting for cloud", color: "#A99DB8"}
-  }, [requestedCloud, cloudAudioTransport, cloudStatus])
+  }, [requestedCloud, cloudAudioTransport, cloudStatus, offlineEngine])
 
   const app = captionsApp
 
