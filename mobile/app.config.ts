@@ -104,7 +104,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     scheme: isG2AccessBuild ? "g2glasses" : "com.mentra",
     orientation: "portrait",
     userInterfaceStyle: isG2AccessBuild ? "dark" : "automatic",
-    icon: isG2AccessBuild ? "./assets/icons/even_realities/even_notify_logo.png" : variant.icon,
+    icon: isG2AccessBuild ? "./assets/glasses/even_realities_g2/even_realities_g2.png" : variant.icon,
     updates: {
       fallbackToCacheTimeout: 0,
     },
@@ -120,7 +120,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
       versionCode: buildNumber,
       adaptiveIcon: {
-        foregroundImage: isG2AccessBuild ? "./assets/icons/even_realities/even_notify_logo.png" : variant.adaptiveIcon,
+        foregroundImage: isG2AccessBuild ? "./assets/glasses/even_realities_g2/even_realities_g2.png" : variant.adaptiveIcon,
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
         backgroundColor: isG2AccessBuild ? "#050208" : "#fff",
       },
@@ -159,7 +159,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ],
     },
     ios: {
-      icon: isG2AccessBuild ? "./assets/icons/even_realities/even_notify_logo.png" : variant.icon,
+      icon: isG2AccessBuild ? "./assets/glasses/even_realities_g2/even_realities_g2.png" : variant.icon,
       supportsTablet: false,
       requireFullScreen: true,
       buildNumber: String(buildNumber),
@@ -290,13 +290,13 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         "expo-splash-screen",
         isG2AccessBuild
           ? {
-              image: "./assets/icons/even_realities/even_notify_logo.png",
+              image: "./assets/glasses/even_realities_g2/even_realities_g2.png",
               resizeMode: "contain",
               imageWidth: 180,
               backgroundColor: "#050208",
               dark: {
                 backgroundColor: "#050208",
-                image: "./assets/icons/even_realities/even_notify_logo.png",
+                image: "./assets/glasses/even_realities_g2/even_realities_g2.png",
               },
             }
           : {
