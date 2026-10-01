@@ -235,6 +235,8 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // STT Commands
   setSttModelDetails(path: string, languageCode: string): Promise<void>
+  /** iOS-safe user selection: persist + crash-guard only, never construct ORT in-process. */
+  stageSttModel(path: string, languageCode: string): Promise<boolean>
   activateSttModel(path: string, languageCode: string): Promise<boolean>
   getSttModelPath(): Promise<string>
   checkSttModelAvailable(): Promise<boolean>
