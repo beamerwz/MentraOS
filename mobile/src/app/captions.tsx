@@ -13,7 +13,11 @@ import LocalMiniappView from "@/components/miniapp/LocalMiniappView"
 import {Screen} from "@/components/ignite"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
 import {engine, useRefresh, useStart} from "@mentra/engine"
-import {sttModelManager as STT} from "@mentra/engine-host-internal"
+import {
+  localMiniappRuntime,
+  sttModelManager as STT,
+  useCloudClientStatusStore,
+} from "@mentra/engine-host-internal"
 import type {CurrentModelSummary, InstalledModelEntry} from "@mentra/engine-host-internal"
 
 const CAPTIONS_PACKAGE = "com.mentra.captions"
@@ -36,6 +40,9 @@ export default function G2IntegratedCaptions() {
   const [error, setError] = useState("")
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const [modelBusy, setModelBusy] = useState<string | null>(null)
+  const [requestedCloud, setRequestedCloud] = useState(false)
+  const cloudStatus = useCloudClientStatusStore((state) => state.status)
+  const cloudAudioTransport = useCloudClientStatusStore((state) => state.audioTransport)
   const [currentModel, setCurrentModel] = useState<CurrentModelSummary>({
     code: "",
     displayName: "Loading model…",
@@ -61,6 +68,28 @@ export default function G2IntegratedCaptions() {
 
   useEffect(() => {
     void refreshModels()
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+
+    const refreshSpeechRoute = async () => {
+      try {
+        const stored = await localMiniappRuntime.getMiniappStorageValue(CAPTIONS_PACKAGE, "useOfflineStt")
+        if (!alive) return
+        setRequestedCloud(stored === "false" || stored === false)
+      } catch {
+        // Before Captions storage is initialized, local/offline is the safe default.
+        if (alive) setRequestedCloud(false)
+      }
+    }
+
+    void refreshSpeechRoute()
+    const timer = setInterval(() => void refreshSpeechRoute(), 600)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
   }, [])
 
   useEffect(() => {
@@ -116,6 +145,26 @@ export default function G2IntegratedCaptions() {
       setModelBusy(null)
     }
   }
+
+  const effectiveSpeechRoute = useMemo(() => {
+    if (!requestedCloud) {
+      return {label: "OFFLINE", detail: "On-device Sherpa", color: "#C4B5FD"}
+    }
+
+    if (cloudAudioTransport === "ws" || cloudAudioTransport === "udp") {
+      return {label: "CLOUD", detail: "Mentra Cloud", color: "#6FE3A5"}
+    }
+
+    if (cloudAudioTransport === "offline") {
+      return {label: "OFFLINE FALLBACK", detail: "Cloud requested", color: "#F0C36B"}
+    }
+
+    if (cloudStatus === "connecting" || cloudStatus === "reconnecting") {
+      return {label: "CLOUD · CONNECTING", detail: "Mentra Cloud", color: "#F0C36B"}
+    }
+
+    return {label: "CLOUD", detail: cloudStatus === "connected" ? "Mentra Cloud" : "Waiting for cloud", color: "#A99DB8"}
+  }, [requestedCloud, cloudAudioTransport, cloudStatus])
 
   const app = captionsApp
 
@@ -185,7 +234,9 @@ export default function G2IntegratedCaptions() {
 
         <View style={{flex: 1}}>
           <RNText style={{color: "white", fontSize: 18, fontWeight: "900"}}>Captions</RNText>
-          <RNText style={{color: "#756981", fontSize: 10, marginTop: 1}}>G2 Glasses · on-device</RNText>
+          <RNText style={{color: "#756981", fontSize: 10, marginTop: 1}}>
+            G2 Glasses · {effectiveSpeechRoute.detail}
+          </RNText>
         </View>
 
         <Pressable
@@ -202,9 +253,9 @@ export default function G2IntegratedCaptions() {
             paddingHorizontal: 11,
             paddingVertical: 8,
           }}>
-          <RNText style={{color: "#8F7FA3", fontSize: 9, fontWeight: "900"}}>MODEL</RNText>
-          <RNText numberOfLines={1} style={{color: "#D8B4FE", fontSize: 11, fontWeight: "800", marginTop: 2}}>
-            {currentModel.displayName}
+          <RNText style={{color: "#8F7FA3", fontSize: 9, fontWeight: "900"}}>SPEECH ENGINE</RNText>
+          <RNText numberOfLines={1} style={{color: effectiveSpeechRoute.color, fontSize: 11, fontWeight: "900", marginTop: 2}}>
+            {effectiveSpeechRoute.label}
           </RNText>
         </Pressable>
       </View>
@@ -277,7 +328,7 @@ export default function G2IntegratedCaptions() {
                       <ActivityIndicator color="#C4B5FD" />
                     ) : (
                       <RNText style={{color: active ? "#6FE3A5" : PURPLE, fontSize: 11, fontWeight: "900"}}>
-                        {active ? "ACTIVE" : "SWITCH"}
+                        {active ? "ACTIVE" : "STAGE"}
                       </RNText>
                     )}
                   </Pressable>
@@ -309,7 +360,7 @@ export default function G2IntegratedCaptions() {
                         <ActivityIndicator color="#C4B5FD" />
                       ) : (
                         <RNText style={{color: entry.current ? "#6FE3A5" : PURPLE, fontSize: 11, fontWeight: "900"}}>
-                          {entry.current ? "ACTIVE" : "SWITCH"}
+                          {entry.current ? "ACTIVE" : "STAGE"}
                         </RNText>
                       )}
                     </Pressable>
