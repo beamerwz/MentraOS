@@ -12,7 +12,7 @@ Pod::Spec.new do |s|
   s.author         = package['author']
   s.homepage       = package['homepage']
   s.platforms      = {
-    :ios => '15.1'
+    :ios => (ENV['G2_ACCESS_BUILD'] == '1' ? '16.4' : '15.1')
   }
   s.swift_version  = '5.9'
   s.source         = {
@@ -42,6 +42,7 @@ Pod::Spec.new do |s|
 
   # iOS frameworks required by Bluetooth SDK
   ios_frameworks = ['AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics']
+  ios_frameworks.concat(['Accelerate', 'Metal', 'CoreML']) if ENV['G2_ACCESS_BUILD'] == '1'
   ios_frameworks << 'Network' if include_expo_adapter
   s.frameworks = ios_frameworks
 
@@ -49,10 +50,13 @@ Pod::Spec.new do |s|
   s.library = 'bz2'
 
   # Vendored frameworks
-  s.vendored_frameworks = [
+  vendored = [
     'Packages/SherpaOnnx/sherpa-onnx.xcframework',
     'Packages/SherpaOnnx/onnxruntime.xcframework'
   ]
+  whisper_xcframework = File.join(__dir__, 'Packages', 'WhisperCpp', 'whisper.xcframework')
+  vendored << 'Packages/WhisperCpp/whisper.xcframework' if File.exist?(whisper_xcframework)
+  s.vendored_frameworks = vendored
 
   s.resource_bundles = {
     'BluetoothSDKPrivacy' => ['Source/PrivacyInfo.xcprivacy']
