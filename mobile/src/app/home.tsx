@@ -445,8 +445,6 @@ export default function G2LabsHome() {
 
         {/* Full-width 2×1 status tile below the launcher grid. */}
         <Pressable
-          /* Full-width 2×1 status tile below the launcher grid. */}
-        <Pressable
           onPress={() => router.push("/thread-lab")}
           style={({pressed}) => ({
             marginTop: 20,
