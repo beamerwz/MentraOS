@@ -24,6 +24,12 @@ import type {CurrentModelSummary, InstalledModelEntry} from "@mentra/engine-host
 const CAPTIONS_PACKAGE = "com.mentra.captions"
 const PURPLE = "#A855F7"
 
+const WHISPER_ENGINES = [
+  {key: "whisper_tiny", title: "ExecuTorch · Whisper Tiny", detail: "Fastest · OpenAI Whisper"},
+  {key: "whisper_base", title: "ExecuTorch · Whisper Base", detail: "Balanced · OpenAI Whisper"},
+  {key: "whisper_small", title: "ExecuTorch · Whisper Small", detail: "Higher accuracy · OpenAI Whisper"},
+] as const
+
 const QUICK_MODELS = [
   {code: "it", title: "Italian Built-in · Kroko INT8"},
   {code: "nemotron_it_80", title: "Nemotron 3.5 · 80 ms"},
@@ -120,9 +126,26 @@ export default function G2IntegratedCaptions() {
     }
   }, [refreshApps, startApplet])
 
+  const selectWhisper = async (engineKey: "whisper_tiny" | "whisper_base" | "whisper_small") => {
+    try {
+      setModelBusy(engineKey)
+      await useSettingsStore.getState().setSetting("g2_offline_engine", engineKey, false)
+      await localMiniappRuntime.setMiniappStorageValue(CAPTIONS_PACKAGE, "useOfflineStt", "true")
+      setRequestedCloud(false)
+      setModelPickerOpen(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setModelBusy(null)
+    }
+  }
+
   const selectPreset = async (code: string) => {
     try {
       setModelBusy(code)
+      await useSettingsStore.getState().setSetting("g2_offline_engine", "sherpa", false)
+      await localMiniappRuntime.setMiniappStorageValue(CAPTIONS_PACKAGE, "useOfflineStt", "true")
+      setRequestedCloud(false)
       const info = await STT.getLanguageInfo(code)
       if (!info.downloaded) await STT.downloadModel(code)
       await STT.activateLanguage(code)
@@ -138,6 +161,9 @@ export default function G2IntegratedCaptions() {
   const selectInstalled = async (entry: InstalledModelEntry) => {
     try {
       setModelBusy(entry.id)
+      await useSettingsStore.getState().setSetting("g2_offline_engine", "sherpa", false)
+      await localMiniappRuntime.setMiniappStorageValue(CAPTIONS_PACKAGE, "useOfflineStt", "true")
+      setRequestedCloud(false)
       await STT.activateInstalledModel(entry.path)
       await refreshModels()
       setModelPickerOpen(false)
@@ -308,8 +334,8 @@ export default function G2IntegratedCaptions() {
             }}>
             <View style={{flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14}}>
               <View>
-                <RNText style={{color: "white", fontSize: 22, fontWeight: "900"}}>Speech model</RNText>
-                <RNText style={{color: "#8F819B", fontSize: 12, marginTop: 3}}>Switch here or from Captions Settings</RNText>
+                <RNText style={{color: "white", fontSize: 22, fontWeight: "900"}}>Speech engine</RNText>
+                <RNText style={{color: "#8F819B", fontSize: 12, marginTop: 3}}>Cloud / Sherpa / ExecuTorch Whisper</RNText>
               </View>
               <Pressable onPress={() => setModelPickerOpen(false)} style={{padding: 8}}>
                 <RNText style={{color: "#C4B5FD", fontSize: 18}}>✕</RNText>
@@ -317,6 +343,42 @@ export default function G2IntegratedCaptions() {
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false}>
+              <RNText style={{color: "#8F7FA3", fontSize: 10, fontWeight: "900", letterSpacing: 1.2, marginBottom: 6}}>
+                EXECUTORCH · OPENAI WHISPER
+              </RNText>
+              {WHISPER_ENGINES.map((item, index) => {
+                const active = !requestedCloud && offlineEngine === item.key
+                return (
+                  <Pressable
+                    key={item.key}
+                    disabled={!!modelBusy || active}
+                    onPress={() => void selectWhisper(item.key)}
+                    style={{
+                      paddingVertical: 12,
+                      borderTopWidth: index === 0 ? 0 : 1,
+                      borderTopColor: "#241A2D",
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 10,
+                    }}>
+                    <View style={{flex: 1}}>
+                      <RNText style={{color: "white", fontWeight: "800", fontSize: 14}}>{item.title}</RNText>
+                      <RNText style={{color: "#756981", fontSize: 10, marginTop: 2}}>{item.detail}</RNText>
+                    </View>
+                    {modelBusy === item.key ? (
+                      <ActivityIndicator color="#C4B5FD" />
+                    ) : (
+                      <RNText style={{color: active ? "#6FE3A5" : PURPLE, fontSize: 11, fontWeight: "900"}}>
+                        {active ? "ACTIVE" : "USE"}
+                      </RNText>
+                    )}
+                  </Pressable>
+                )
+              })}
+
+              <RNText style={{color: "#8F7FA3", fontSize: 10, fontWeight: "900", letterSpacing: 1.2, marginTop: 18, marginBottom: 6}}>
+                SHERPA-ONNX
+              </RNText>
               {QUICK_MODELS.map((item, index) => {
                 const active = currentModel.code === item.code
                 return (
