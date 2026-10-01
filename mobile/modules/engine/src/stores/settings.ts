@@ -606,6 +606,15 @@ export const SETTINGS: Record<string, Setting> = {
   },
   // offline applets
   offline_mode: {key: "offline_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  // G2 LABS local captions backend. Host-only: never synced to glasses/cloud.
+  // Values: sherpa | whisper_tiny | whisper_base | whisper_small.
+  g2_offline_engine: {
+    key: "g2_offline_engine",
+    defaultValue: () => "sherpa",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   // Runtime flag: coordinator flips this on when cloud STT has failed and fallback is active.
   // Native GlassesStore watches it to gate PCM 鈫?Sherpa feeding. Not user-facing.
   local_stt_fallback_active: {
