@@ -6,6 +6,11 @@ import UIKit
 /// so a dead pipeline can be localized without needing Xcode logs.
 final class G2LabDiagnostics {
     private static let lock = NSLock()
+    private static let traceLoggingEnabled = false
+
+    static func trace(_ message: @autoclosure () -> String) {
+        if traceLoggingEnabled { Bridge.log(message()) }
+    }
 
     private static var lastLc3Ms: Double = -1
     private static var lastPcmMs: Double = -1
@@ -354,7 +359,7 @@ final class SherpaOnnxTranscriber: LocalSTTTranscriber, @unchecked Sendable {
     // Use several CPU threads for large streaming models. The previous single-thread
     // configuration benchmarked above real time on-device (RTF > 1), which caused
     // backlog and eventually dropped spoken words.
-    private static let INFERENCE_THREADS = 3
+    private static let INFERENCE_THREADS = min(4, max(2, ProcessInfo.processInfo.activeProcessorCount - 2))
     // Never wait just to create a batch. If several PCM chunks are already queued,
     // merge up to this much audio before crossing Swift -> sherpa/ORT so we catch up
     // with far less per-chunk decoder overhead.
@@ -662,11 +667,11 @@ final class SherpaOnnxTranscriber: LocalSTTTranscriber, @unchecked Sendable {
     private func handleTranscriptionResult(text: String, isFinal: Bool) {
         let g2TraceResultNs = DispatchTime.now().uptimeNanoseconds
         G2LabDiagnostics.markTranscript(ns: g2TraceResultNs)
-        Bridge.log("G2LAB_TRACE T3_SHERPA_RESULT ns=\(g2TraceResultNs) final=\(isFinal) chars=\(text.count) text=\(text.debugDescription)")
+        G2LabDiagnostics.trace("G2LAB_TRACE T3_SHERPA_RESULT ns=\(g2TraceResultNs) final=\(isFinal) chars=\(text.count) text=\(text.debugDescription)")
         // Forward to delegate if set. Measure main-queue handoff separately.
         DispatchQueue.main.async { [weak self] in
             let g2TraceMainNs = DispatchTime.now().uptimeNanoseconds
-            Bridge.log("G2LAB_TRACE T4_MAIN_STT_CALLBACK ns=\(g2TraceMainNs) queueMs=\(String(format: "%.3f", Double(g2TraceMainNs - g2TraceResultNs) / 1_000_000.0)) final=\(isFinal)")
+            G2LabDiagnostics.trace("G2LAB_TRACE T4_MAIN_STT_CALLBACK ns=\(g2TraceMainNs) queueMs=\(String(format: "%.3f", Double(g2TraceMainNs - g2TraceResultNs) / 1_000_000.0)) final=\(isFinal)")
             if isFinal {
                 STTTools.didReceiveFinalTranscription(text)
             } else {
@@ -704,7 +709,7 @@ final class SherpaOnnxTranscriber: LocalSTTTranscriber, @unchecked Sendable {
             let g2TraceAudioMs = Double(g2TraceSamples) * 1000.0 / Double(Self.SAMPLE_RATE)
             self.lastQueuedAudioMs = g2TraceAudioMs
             G2LabDiagnostics.markQueue(depth: self.pcmBuffers.count, audioMs: g2TraceAudioMs)
-            Bridge.log("G2LAB_TRACE STT_QUEUE ns=\(g2TraceQueueNs) depthBefore=\(queueSizeBefore) depthAfter=\(self.pcmBuffers.count) bytes=\(pcm16le.count) audioMs=\(String(format: "%.2f", g2TraceAudioMs))")
+            G2LabDiagnostics.trace("G2LAB_TRACE STT_QUEUE ns=\(g2TraceQueueNs) depthBefore=\(queueSizeBefore) depthAfter=\(self.pcmBuffers.count) bytes=\(pcm16le.count) audioMs=\(String(format: "%.2f", g2TraceAudioMs))")
 
             // Keep queue size manageable
             if self.pcmBuffers.count > Self.QUEUE_CAPACITY {
@@ -787,7 +792,7 @@ final class SherpaOnnxTranscriber: LocalSTTTranscriber, @unchecked Sendable {
                     audioMs: max(self.lastQueuedAudioMs, 0)
                 )
                 let g2TraceDecodeStartNs = DispatchTime.now().uptimeNanoseconds
-                Bridge.log("G2LAB_TRACE STT_DECODE_START ns=\(g2TraceDecodeStartNs) bytes=\(data.count) chunks=\(batchChunks) audioMs=\(String(format: "%.2f", batchAudioMs))")
+                G2LabDiagnostics.trace("G2LAB_TRACE STT_DECODE_START ns=\(g2TraceDecodeStartNs) bytes=\(data.count) chunks=\(batchChunks) audioMs=\(String(format: "%.2f", batchAudioMs))")
                 // Synchronize access to recognizer to prevent race conditions
                 objc_sync_enter(self)
                 defer { objc_sync_exit(self) }
@@ -820,7 +825,7 @@ final class SherpaOnnxTranscriber: LocalSTTTranscriber, @unchecked Sendable {
                             decodeMs: g2TraceDecodeMs,
                             audioMs: batchAudioMs
                         )
-                        Bridge.log("G2LAB_TRACE STT_DECODE_DONE ns=\(g2TraceDecodeDoneNs) passes=\(decodeCount) decodeMs=\(String(format: "%.3f", g2TraceDecodeMs))")
+                        G2LabDiagnostics.trace("G2LAB_TRACE STT_DECODE_DONE ns=\(g2TraceDecodeDoneNs) passes=\(decodeCount) decodeMs=\(String(format: "%.3f", g2TraceDecodeMs))")
                     }
 
                     // If utterance endpoint detected
@@ -829,7 +834,7 @@ final class SherpaOnnxTranscriber: LocalSTTTranscriber, @unchecked Sendable {
                         G2LabDiagnostics.markEndpoint(ns: endpointNs)
                         let result = recognizer.getResult()
                         let finalText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        Bridge.log("G2LAB_TRACE ENDPOINT ns=\(endpointNs) finalChars=\(finalText.count)")
+                        G2LabDiagnostics.trace("G2LAB_TRACE ENDPOINT ns=\(endpointNs) finalChars=\(finalText.count)")
 
                         if !finalText.isEmpty {
                             handleTranscriptionResult(text: finalText, isFinal: true)
@@ -846,7 +851,7 @@ final class SherpaOnnxTranscriber: LocalSTTTranscriber, @unchecked Sendable {
                             let g2TracePartialNs = DispatchTime.now().uptimeNanoseconds
                             let g2TraceDecodeMs = Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0
                             G2LabDiagnostics.markPartial(ns: g2TracePartialNs, decodeMs: g2TraceDecodeMs, audioMs: batchAudioMs)
-                            Bridge.log("G2LAB_TRACE FIRST_CHANGED_PARTIAL ns=\(g2TracePartialNs) decodeMs=\(String(format: "%.3f", Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0)) chars=\(partial.count)")
+                            G2LabDiagnostics.trace("G2LAB_TRACE FIRST_CHANGED_PARTIAL ns=\(g2TracePartialNs) decodeMs=\(String(format: "%.3f", Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0)) chars=\(partial.count)")
                             handleTranscriptionResult(text: partial, isFinal: false)
                             lastPartialResult = partial
                         }
