@@ -1,17 +1,17 @@
 /**
- * G2 on-glasses Speech quick menu.
+ * G2 on-glasses Captions launcher / engine submenu.
  *
- * Entry point: a synthetic item injected into the G2 native swipe menu.
- * Interaction: swipe up/down to move, single tap to activate.
- *
- * The menu deliberately pauses Captions while it owns the glasses display.
- * Choosing Offline / Cloud starts Captions headlessly. Downloaded-model changes
- * are staged safely for the next clean app launch so ORT is never hot-swapped.
+ * Flow:
+ *   double tap -> native G2 dashboard -> Captions
+ *   Captions -> this submenu
+ *   choose Mentra Cloud / Sherpa / ExecuTorch Whisper
+ *   while Captions is running, another double tap stops + closes it
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 
 import {useAppStatusStore} from "../stores/apps"
+import {useSettingsStore} from "../stores/settings"
 import {cloudClientService} from "./CloudClientService"
 import localMiniappRuntime from "./LocalMiniappRuntime"
 import sttModelManager, {type InstalledModelEntry} from "./STTModelManager"
@@ -19,7 +19,8 @@ import sttModelManager, {type InstalledModelEntry} from "./STTModelManager"
 const CAPTIONS_PACKAGE = "com.mentra.captions"
 const CAPTIONS_OFFLINE_KEY = "useOfflineStt"
 
-type MenuScreen = "root" | "models"
+type MenuScreen = "root" | "sherpa" | "whisper"
+type OfflineEngine = "sherpa" | "whisper_tiny" | "whisper_base" | "whisper_small"
 
 type ModelChoice = {
   key: string
@@ -29,13 +30,20 @@ type ModelChoice = {
   installed?: InstalledModelEntry
 }
 
+const WHISPER_CHOICES: Array<{engine: OfflineEngine; label: string}> = [
+  {engine: "whisper_tiny", label: "Whisper Tiny · fastest"},
+  {engine: "whisper_base", label: "Whisper Base · balanced"},
+  {engine: "whisper_small", label: "Whisper Small · accuracy"},
+]
+
 class G2SpeechQuickMenu {
   private active = false
   private screen: MenuScreen = "root"
   private cursor = 0
   private wasCaptionsRunning = false
   private mode: "local" | "cloud" = "local"
-  private currentModelName = "No offline model"
+  private offlineEngine: OfflineEngine = "sherpa"
+  private currentModelName = "Italian Built-in"
   private models: ModelChoice[] = []
   private statusLine = ""
 
@@ -53,8 +61,6 @@ class G2SpeechQuickMenu {
     const captions = store.apps.find((app) => app.packageName === CAPTIONS_PACKAGE)
     this.wasCaptionsRunning = captions?.running === true
 
-    // Captions continuously owns the display while speaking. Pause it so the
-    // control surface cannot be overwritten by a transcript mid-selection.
     if (this.wasCaptionsRunning) {
       await store.stop(CAPTIONS_PACKAGE)
     }
@@ -85,18 +91,18 @@ class G2SpeechQuickMenu {
       void this.activate()
       return true
     }
-    if (gesture === "foreground_exit" || gesture === "system_exit") {
+    if (gesture === "foreground_exit" || gesture === "system_exit" || gesture === "double_tap") {
       void this.close(this.wasCaptionsRunning)
       return true
     }
 
-    // While our screen is open, consume the rest so a double tap / controller
-    // gesture does not accidentally act on the paused app underneath.
     return true
   }
 
   private itemCount(): number {
-    return this.screen === "root" ? 5 : Math.max(1, this.models.length + 1)
+    if (this.screen === "sherpa") return Math.max(1, this.models.length + 1)
+    if (this.screen === "whisper") return WHISPER_CHOICES.length + 1
+    return 5
   }
 
   private move(delta: number): void {
@@ -108,16 +114,16 @@ class G2SpeechQuickMenu {
   private async activate(): Promise<void> {
     if (!this.active) return
 
-    if (this.screen === "models") {
+    if (this.screen === "sherpa") {
       if (this.cursor >= this.models.length) {
         this.screen = "root"
-        this.cursor = 2
+        this.cursor = 1
         await this.render()
         return
       }
 
       const model = this.models[this.cursor]
-      this.statusLine = "Staging model safely..."
+      this.statusLine = "Staging Sherpa model safely..."
       await this.render()
       try {
         const activation = model.code
@@ -128,6 +134,7 @@ class G2SpeechQuickMenu {
                 throw new Error("Model target is unavailable")
               })()
 
+        await this.persistOfflineEngine("sherpa")
         await this.persistMode("local")
         if (activation === "staged-relaunch") {
           this.statusLine = "STAGED · reopen G2 app once"
@@ -144,24 +151,43 @@ class G2SpeechQuickMenu {
       return
     }
 
+    if (this.screen === "whisper") {
+      if (this.cursor >= WHISPER_CHOICES.length) {
+        this.screen = "root"
+        this.cursor = 2
+        await this.render()
+        return
+      }
+
+      const choice = WHISPER_CHOICES[this.cursor]
+      await this.persistOfflineEngine(choice.engine)
+      await this.persistMode("local")
+      this.statusLine = `${choice.label} selected`
+      await this.startCaptionsAndClose()
+      return
+    }
+
     switch (this.cursor) {
       case 0:
-        await this.persistMode("local")
-        await this.startCaptionsAndClose()
-        return
-      case 1:
         await this.persistMode("cloud")
         await this.startCaptionsAndClose()
         return
-      case 2:
-        this.screen = "models"
+      case 1:
+        this.screen = "sherpa"
         this.cursor = Math.max(0, this.models.findIndex((model) => model.active))
         if (this.cursor < 0) this.cursor = 0
         await this.render()
         return
+      case 2: {
+        this.screen = "whisper"
+        const index = WHISPER_CHOICES.findIndex((choice) => choice.engine === this.offlineEngine)
+        this.cursor = index >= 0 ? index : 0
+        await this.render()
+        return
+      }
       case 3:
         this.wasCaptionsRunning = false
-        await this.close(false)
+        await this.stopCaptionsAndClose()
         return
       default:
         await this.close(this.wasCaptionsRunning)
@@ -175,6 +201,11 @@ class G2SpeechQuickMenu {
       CAPTIONS_OFFLINE_KEY,
       mode === "local" ? "true" : "false",
     )
+  }
+
+  private async persistOfflineEngine(engine: OfflineEngine): Promise<void> {
+    this.offlineEngine = engine
+    await useSettingsStore.getState().setSetting("g2_offline_engine", engine, false)
   }
 
   private async startCaptionsAndClose(): Promise<void> {
@@ -200,6 +231,12 @@ class G2SpeechQuickMenu {
       this.statusLine = "Could not start Captions"
       await this.render()
     }
+  }
+
+  private async stopCaptionsAndClose(): Promise<void> {
+    this.active = false
+    await useAppStatusStore.getState().stop(CAPTIONS_PACKAGE).catch(() => undefined)
+    await Promise.resolve(BluetoothSdk.clearDisplay()).catch(() => undefined)
   }
 
   private async close(resumeCaptions: boolean): Promise<void> {
@@ -228,6 +265,14 @@ class G2SpeechQuickMenu {
       this.mode = "local"
     }
 
+    const configuredEngine = String(useSettingsStore.getState().getSetting("g2_offline_engine") ?? "sherpa")
+    this.offlineEngine =
+      configuredEngine === "whisper_tiny" ||
+      configuredEngine === "whisper_base" ||
+      configuredEngine === "whisper_small"
+        ? configuredEngine
+        : "sherpa"
+
     const current = await sttModelManager.getCurrentModelSummary().catch(() => ({
       code: "",
       displayName: "No offline model",
@@ -248,7 +293,7 @@ class G2SpeechQuickMenu {
           code: config.code,
         })
       } catch {
-        // A half-installed preset should not appear on the glasses.
+        // Ignore half-installed presets.
       }
     }
 
@@ -272,38 +317,62 @@ class G2SpeechQuickMenu {
     return clean.length <= max ? clean : `${clean.slice(0, max - 1)}…`
   }
 
+  private renderScrollingList(
+    title: string,
+    items: Array<{label: string; active: boolean}>,
+  ): string {
+    const rows: string[] = []
+    const start = Math.max(0, Math.min(this.cursor - 2, Math.max(0, items.length - 5)))
+    for (let index = start; index < Math.min(items.length, start + 5); index += 1) {
+      const item = items[index]
+      const pointer = index === this.cursor ? ">" : " "
+      const active = item.active ? " *" : ""
+      rows.push(`${pointer} ${this.cropLabel(item.label, 26)}${active}`)
+    }
+    return [title, ...rows, "", this.statusLine || "Swipe ↑↓ · tap"].join("\n")
+  }
+
   private async render(): Promise<void> {
     if (!this.active) return
 
-    if (this.screen === "models") {
-      const rows: string[] = []
-      const items = [...this.models.map((model) => ({label: model.label, active: model.active})), {label: "Back", active: false}]
-      const start = Math.max(0, Math.min(this.cursor - 2, Math.max(0, items.length - 5)))
-      for (let index = start; index < Math.min(items.length, start + 5); index += 1) {
-        const item = items[index]
-        const pointer = index === this.cursor ? ">" : " "
-        const active = item.active ? " *" : ""
-        rows.push(`${pointer} ${this.cropLabel(item.label, 26)}${active}`)
-      }
+    if (this.screen === "sherpa") {
+      const items = [
+        ...this.models.map((model) => ({
+          label: model.label,
+          active: this.mode === "local" && this.offlineEngine === "sherpa" && model.active,
+        })),
+        {label: "Back", active: false},
+      ]
+      await BluetoothSdk.displayText(this.renderScrollingList("CAPTIONS · SHERPA", items))
+      return
+    }
 
-      const text = [
-        "G2 SPEECH · OFFLINE MODELS",
-        ...rows,
-        "",
-        this.statusLine || "Swipe ↑↓ · tap to select",
-      ].join("\n")
-      await BluetoothSdk.displayText(text)
+    if (this.screen === "whisper") {
+      const items = [
+        ...WHISPER_CHOICES.map((choice) => ({
+          label: choice.label,
+          active: this.mode === "local" && this.offlineEngine === choice.engine,
+        })),
+        {label: "Back", active: false},
+      ]
+      await BluetoothSdk.displayText(this.renderScrollingList("CAPTIONS · EXECUTORCH", items))
       return
     }
 
     const cloud = cloudClientService.getStatus()
     const cloudLabel = cloud.status === "connected" ? "Mentra Cloud · connected" : `Mentra Cloud · ${cloud.status}`
+    const sherpaLabel = this.offlineEngine === "sherpa" ? `Sherpa · ${this.currentModelName}` : "Sherpa offline"
+    const whisperActive = this.offlineEngine.startsWith("whisper_")
+    const whisperLabel = whisperActive
+      ? WHISPER_CHOICES.find((choice) => choice.engine === this.offlineEngine)?.label ?? "ExecuTorch Whisper"
+      : "ExecuTorch Whisper"
+
     const rows = [
-      {label: "Offline captions", active: this.mode === "local"},
       {label: cloudLabel, active: this.mode === "cloud"},
-      {label: `Model: ${this.currentModelName}`, active: false},
+      {label: sherpaLabel, active: this.mode === "local" && this.offlineEngine === "sherpa"},
+      {label: whisperLabel, active: this.mode === "local" && whisperActive},
       {label: "Stop captions", active: false},
-      {label: "Exit / resume previous", active: false},
+      {label: "Exit", active: false},
     ]
 
     const body = rows.map((row, index) => {
@@ -313,8 +382,8 @@ class G2SpeechQuickMenu {
     })
 
     const text = [
-      "G2 SPEECH",
-      "Start captions from your glasses",
+      "CAPTIONS",
+      "Choose speech engine",
       ...body,
       "",
       this.statusLine || "Swipe ↑↓ · tap",
