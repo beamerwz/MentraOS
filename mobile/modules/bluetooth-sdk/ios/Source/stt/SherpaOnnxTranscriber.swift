@@ -51,6 +51,7 @@ final class G2LabDiagnostics {
     private static var modelState = "no-model"
     private static var modelPath = ""
     private static var lastError = ""
+    private static var inferenceThreads: Int = 3
 
     private static func nowMs(_ ns: UInt64? = nil) -> Double {
         Double(ns ?? DispatchTime.now().uptimeNanoseconds) / 1_000_000.0
@@ -111,6 +112,12 @@ final class G2LabDiagnostics {
     static func markError(_ message: String) {
         lock.lock()
         lastError = message
+        lock.unlock()
+    }
+
+    static func markInferenceThreads(_ value: Int) {
+        lock.lock()
+        inferenceThreads = max(1, min(4, value))
         lock.unlock()
     }
 
@@ -307,6 +314,7 @@ final class G2LabDiagnostics {
             "modelState": modelState,
             "modelPath": modelPath,
             "lastError": lastError,
+            "inferenceThreads": inferenceThreads,
             "lc3AgeMs": age(lastLc3Ms, now: now),
             "pcmAgeMs": age(lastPcmMs, now: now),
             "ingestAgeMs": age(lastIngestMs, now: now),
@@ -350,10 +358,22 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
 
     private static let SAMPLE_RATE = 16000 // Sherpa-ONNX model's required sample rate
     private static let QUEUE_CAPACITY = 100 // Max number of audio buffers to keep in queue
-    // Use several CPU threads for large streaming models. The previous single-thread
-    // configuration benchmarked above real time on-device (RTF > 1), which caused
-    // backlog and eventually dropped spoken words.
-    private static let INFERENCE_THREADS = 3
+    // GOLD is 3 threads. G2 Thread Lab can stage 1...4 for the next recognizer
+    // creation/app launch so we can benchmark latency, RTF and battery without
+    // mutating a live ORT recognizer in-process.
+    private static let inferenceThreadsDefaultsKey = "g2labs.sherpa.inferenceThreads"
+
+    static var configuredInferenceThreads: Int {
+        let stored = UserDefaults.standard.integer(forKey: inferenceThreadsDefaultsKey)
+        return stored == 0 ? 3 : max(1, min(4, stored))
+    }
+
+    @discardableResult
+    static func setConfiguredInferenceThreads(_ value: Int) -> Int {
+        let clamped = max(1, min(4, value))
+        UserDefaults.standard.set(clamped, forKey: inferenceThreadsDefaultsKey)
+        return clamped
+    }
     // Never wait just to create a batch. If several PCM chunks are already queued,
     // merge up to this much audio before crossing Swift -> sherpa/ORT so we catch up
     // with far less per-chunk decoder overhead.
@@ -472,6 +492,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
         }
         defer { endInitialization() }
 
+        G2LabDiagnostics.markInferenceThreads(Self.configuredInferenceThreads)
         if let selectedPath = Self.customModelPath {
             G2LabDiagnostics.markModel(state: "initializing", path: selectedPath)
         } else {
@@ -517,7 +538,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     // Create model config with CTC
                     var modelConfig = sherpaOnnxOnlineModelConfig(
                         tokens: tokensPath,
-                        numThreads: Self.INFERENCE_THREADS,
+                        numThreads: Self.configuredInferenceThreads,
                         nemoCtc: nemoCtc
                     )
 
@@ -574,7 +595,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     var modelConfig = sherpaOnnxOnlineModelConfig(
                         tokens: tokensPath,
                         transducer: transducer,
-                        numThreads: Self.INFERENCE_THREADS
+                        numThreads: Self.configuredInferenceThreads
                     )
 
                     // Configure recognizer
