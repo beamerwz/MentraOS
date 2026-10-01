@@ -428,6 +428,11 @@ function LocalMiniappView({
             void switchG2CaptionModel(g2Message.key)
             return
           }
+          if (g2Message.type === "g2_cloud_login") {
+            engine.miniapps.clearForeground()
+            useNavigationStore.getState().push("/auth/start")
+            return
+          }
         } catch {
           // Normal Mentra envelopes continue through the existing bridge.
         }
