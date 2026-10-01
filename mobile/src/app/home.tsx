@@ -381,6 +381,7 @@ export default function G2LabsHome() {
         </View>
 
         <View style={{gap: 12}}>
+          {/* Fixed 2×2 launcher grid: row 1 = Captions / Model Lab, row 2 = Microphone / Settings. */}
           <View style={{flexDirection: "row", gap: 12}}>
             <QuickCard
               title="Captions"
@@ -426,6 +427,7 @@ export default function G2LabsHome() {
           </View>
         )}
 
+        {/* Full-width 2×1 status tile below the launcher grid. */}
         <Pressable
           onPress={() => router.push("/model-lab")}
           style={({pressed}) => ({
