@@ -116,9 +116,21 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("update") { (category: String, values: [String: Any]) in
             await MainActor.run {
                 let normalizedCategory = ObservableStore.normalizeCategory(category)
+                var micRoutingChanged = false
                 for (key, value) in values {
                     if value is NSNull { continue }
                     DeviceStore.shared.apply(normalizedCategory, key, value)
+                    if normalizedCategory == ObservableStore.bluetoothCategory,
+                       ["should_send_pcm", "should_send_lc3", "should_send_transcript", "local_stt_fallback_active", "preferred_mic"].contains(key) {
+                        micRoutingChanged = true
+                    }
+                }
+                // Raw setting updates are used by Runtime Lab and cloud/local
+                // routing. Recompute the actual microphone state immediately;
+                // otherwise should_send_pcm changes only the store and no PCM
+                // source is started until some unrelated mic event happens.
+                if micRoutingChanged {
+                    DeviceManager.shared.setMicState()
                 }
             }
         }
