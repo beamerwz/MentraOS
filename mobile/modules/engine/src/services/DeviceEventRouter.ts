@@ -30,13 +30,65 @@ import {useAppStatusStore} from "../stores/apps"
 import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
-import g2SpeechQuickMenu from "./G2SpeechQuickMenu"
 import {G2_SPEECH_MENU_PACKAGE} from "./G2SpeechQuickMenuConstants"
 
 let subs: Array<{remove: () => void}> = []
 
+const G2_CAPTIONS_PACKAGE = "com.mentra.captions"
+let lastNativeCaptionsActive: boolean | null = null
+
+async function syncG2CaptionsNativeState(active: boolean): Promise<void> {
+  if (process.env.EXPO_PUBLIC_G2_LABS !== "1") return
+  if (lastNativeCaptionsActive === active) return
+  lastNativeCaptionsActive = active
+  try {
+    await BluetoothSdk.updateBluetoothSettings({g2_captions_active: active})
+  } catch (error) {
+    console.warn("G2 Captions: native active-state sync failed", error)
+  }
+}
+
+async function toggleG2CaptionsFromGlasses(): Promise<void> {
+  const store = useAppStatusStore.getState()
+  let app = store.apps.find((candidate) => candidate.packageName === G2_CAPTIONS_PACKAGE)
+
+  if (!app) {
+    await store.refresh()
+    app = useAppStatusStore.getState().apps.find((candidate) => candidate.packageName === G2_CAPTIONS_PACKAGE)
+  }
+  if (!app) {
+    console.warn("G2 Captions: bundled Captions miniapp is not installed")
+    return
+  }
+
+  if (app.running) {
+    await useAppStatusStore.getState().stop(G2_CAPTIONS_PACKAGE)
+    await Promise.resolve(BluetoothSdk.clearDisplay()).catch(() => undefined)
+    await syncG2CaptionsNativeState(false)
+    return
+  }
+
+  const started = await useAppStatusStore.getState().start(app, {skipNavigation: true})
+  await syncG2CaptionsNativeState(started)
+}
+
 export function startDeviceEventRouter(): void {
   if (subs.length) return
+
+  // Keep native G2 aware of whether Captions owns the display. The native
+  // double-tap handler uses this bit to suppress the dashboard on the second
+  // double-tap, letting JS stop/close Captions without a menu flash.
+  let previousCaptionsRunning =
+    useAppStatusStore.getState().apps.find((app) => app.packageName === G2_CAPTIONS_PACKAGE)?.running === true
+  void syncG2CaptionsNativeState(previousCaptionsRunning)
+  subs.push({
+    remove: useAppStatusStore.subscribe((state) => {
+      const running = state.apps.find((app) => app.packageName === G2_CAPTIONS_PACKAGE)?.running === true
+      if (running === previousCaptionsRunning) return
+      previousCaptionsRunning = running
+      void syncG2CaptionsNativeState(running)
+    }),
+  })
 
   // --- device state → engine stores ---
 
@@ -183,10 +235,17 @@ export function startDeviceEventRouter(): void {
   )
   subs.push(
     BluetoothSdk.addListener("touch_event", (event) => {
-      // The G2 Speech quick menu is phone-hosted but rendered/controlled entirely
-      // on the glasses. While it is open, swipe/tap gestures belong to that menu
-      // instead of leaking into whatever miniapp was previously running.
-      if (g2SpeechQuickMenu.handleTouch(event)) return
+      if (process.env.EXPO_PUBLIC_G2_LABS === "1" && event.gestureName === "double_tap") {
+        const captionsRunning =
+          useAppStatusStore.getState().apps.find((app) => app.packageName === G2_CAPTIONS_PACKAGE)?.running === true
+
+        // Native G2 owns double-tap as the app/dashboard gesture. When Captions
+        // is already active, the second double-tap becomes a clean STOP + CLOSE.
+        // When it is inactive, native opens the dashboard containing "Captions".
+        if (captionsRunning) void toggleG2CaptionsFromGlasses()
+        return
+      }
+
       localMiniappRuntime.forwardEvent("touch_event", event)
     }),
   )
@@ -228,7 +287,10 @@ export function startDeviceEventRouter(): void {
       if (!packageName) return
 
       if (packageName === G2_SPEECH_MENU_PACKAGE) {
-        void g2SpeechQuickMenu.open()
+        // Synthetic native dashboard item. Selecting "Captions" starts the
+        // bundled app headlessly with the user's current Cloud/Offline choice.
+        // Selecting it again also behaves as a toggle.
+        void toggleG2CaptionsFromGlasses()
         return
       }
 
