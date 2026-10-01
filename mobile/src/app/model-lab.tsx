@@ -492,7 +492,7 @@ export default function G2ModelLab() {
                       : selected
                         ? "ACTIVE"
                         : downloaded
-                          ? "USE"
+                          ? "SWITCH"
                           : "GET"
                   }
                   onPress={() => void activate(item.code)}
@@ -538,7 +538,7 @@ export default function G2ModelLab() {
                 </View>
                 <View style={{flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap"}}>
                   <ActionButton
-                    label={entry.current ? "SELECTED" : busy === `library:${entry.id}` ? "LOADING…" : "USE"}
+                    label={entry.current ? "SELECTED" : busy === `library:${entry.id}` ? "LOADING…" : "SWITCH"}
                     onPress={() => void useInstalled(entry)}
                     disabled={!!busy || entry.current}
                   />
@@ -647,7 +647,7 @@ export default function G2ModelLab() {
               installed?.runnable
                 ? installed.current
                   ? "ACTIVE"
-                  : "USE"
+                  : "SWITCH"
                 : installed
                   ? "DOWNLOADED"
                   : direct
@@ -671,6 +671,14 @@ export default function G2ModelLab() {
                     secondary={!direct || installed != null}
                   />
                   <ActionButton label="SOURCE" secondary onPress={() => void Linking.openURL(model.sourceUrl)} />
+                  {installed ? (
+                    <ActionButton
+                      label={busy === `delete:${installed.id}` ? "DELETING…" : "DELETE"}
+                      danger
+                      onPress={() => deleteInstalled(installed)}
+                      disabled={!!busy}
+                    />
+                  ) : null}
                 </View>
               </View>
             )
