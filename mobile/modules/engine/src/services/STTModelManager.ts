@@ -1046,13 +1046,79 @@ class STTModelManager {
     return Promise.all(models.slice(0, 18).map((model) => inspect(model)))
   }
 
+  private curatedRemoteModels(query: string): RemoteCatalogModel[] {
+    const needle = query.trim().toLowerCase()
+    const languageAliases: Record<string, string> = {
+      en: "english inglese",
+      it: "italian italiano italy",
+      fr: "french français francais",
+      de: "german deutsch",
+      es: "spanish español espanol",
+      zh: "chinese 中文",
+      ko: "korean 한국어",
+    }
+
+    return Object.values(this.languages)
+      .filter((config) => Boolean(config.downloadUrl || config.directFiles?.length))
+      .filter((config) => {
+        if (!needle) return true
+        const root = config.code.split("_")[0]
+        const haystack = [
+          config.code,
+          config.displayName,
+          config.fileName,
+          config.languageCode,
+          languageAliases[root] ?? "",
+          "sherpa onnx streaming asr speech recognition",
+        ]
+          .join(" ")
+          .toLowerCase()
+        return needle.split(/\s+/).every((part) => haystack.includes(part))
+      })
+      .map((config) => ({
+        id: `curated:${config.code}`,
+        displayName: config.displayName,
+        source: "G2 LABS curated",
+        sourceUrl: config.directFiles?.length
+          ? "https://huggingface.co/hudaiapa88/sherpa-stt-onnx"
+          : "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
+        downloadUrl: config.downloadUrl,
+        directFiles: config.directFiles,
+        fileName: config.downloadUrl?.split("/").pop(),
+        size: config.size,
+        languageCode: config.languageCode,
+        compatibility: "native-likely",
+        runtime: "sherpa-onnx",
+        downloadMode: "test",
+        detail: "Curated Sherpa-ONNX model already known to this G2 LABS build.",
+        tags: ["curated", "sherpa-onnx", config.code],
+      }))
+  }
+
+  private withCatalogTimeout<T>(promise: Promise<T>, label: string, ms = 3500): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms} ms`)), ms)
+      promise.then(
+        (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        (error) => {
+          clearTimeout(timer)
+          reject(error)
+        },
+      )
+    })
+  }
+
   async browseRemoteModels(query = ""): Promise<RemoteCatalogModel[]> {
+    const curated = this.curatedRemoteModels(query)
     const [sherpa, huggingFace] = await Promise.allSettled([
-      this.fetchSherpaReleaseCatalog(query),
-      this.fetchHuggingFaceCatalog(query),
+      this.withCatalogTimeout(this.fetchSherpaReleaseCatalog(query), "Sherpa catalog"),
+      this.withCatalogTimeout(this.fetchHuggingFaceCatalog(query), "Hugging Face catalog"),
     ])
 
-    const result: RemoteCatalogModel[] = []
+    const result: RemoteCatalogModel[] = [...curated]
     if (sherpa.status === "fulfilled") result.push(...sherpa.value)
     if (huggingFace.status === "fulfilled") {
       result.push(
@@ -1064,7 +1130,7 @@ class STTModelManager {
 
     const seen = new Set<string>()
     const deduped = result.filter((model) => {
-      const key = `${model.source}:${model.displayName}`.toLowerCase()
+      const key = model.displayName.toLowerCase()
       if (seen.has(key)) return false
       seen.add(key)
       return true
@@ -1080,9 +1146,11 @@ class STTModelManager {
 
     return deduped
       .sort((a, b) => {
+        const curatedA = a.source === "G2 LABS curated" ? 0 : 1
+        const curatedB = b.source === "G2 LABS curated" ? 0 : 1
         const rankA = a.compatibility === "native-likely" ? 0 : 1
         const rankB = b.compatibility === "native-likely" ? 0 : 1
-        return rankA - rankB || a.displayName.localeCompare(b.displayName)
+        return curatedA - curatedB || rankA - rankB || a.displayName.localeCompare(b.displayName)
       })
       .slice(0, 80)
   }
