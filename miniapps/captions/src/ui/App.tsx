@@ -65,7 +65,7 @@ export function App() {
   const presentation = G2_LABS
     ? {
         label: "G2 Glasses",
-        detail: "On-device captions",
+        detail: "Local + Mentra Cloud captions",
         accentColor: "#6D35A8",
         accentForeground: "#FFFFFF",
         dark: true,
@@ -122,6 +122,7 @@ export function App() {
               settings={settings}
               canPosition={canPosition}
               displayPreview={displayPreview}
+              cloudStatus={cloudStatus}
               accentColor={presentation.accentColor}
               accentForeground={presentation.accentForeground}
               onUpdateUseOfflineStt={updateUseOfflineStt}
