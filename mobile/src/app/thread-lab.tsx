@@ -55,6 +55,10 @@ export default function ThreadPerformanceLab() {
   })
   const [samples, setSamples] = useState<Record<string, SavedSample>>({})
   const [message, setMessage] = useState("3 threads is the current GOLD baseline.")
+  const [autoRunning, setAutoRunning] = useState(false)
+  const [autoIndex, setAutoIndex] = useState(0)
+
+  const autoThreads = [1, 2, 3, 4]
 
   useEffect(() => {
     void RNFS.readFile(RESULTS_FILE, "utf8")
@@ -110,6 +114,27 @@ export default function ThreadPerformanceLab() {
     setMessage(`Saved the current ${activeThreads}-thread result. Test the same phrase/conditions for each thread count.`)
   }
 
+  const beginAutoTest = () => {
+    setAutoRunning(true)
+    setAutoIndex(0)
+    stageThreads(autoThreads[0])
+    setMessage("AUTO A/B started · 1 thread is staged. Restart G2 Glasses, run the same spoken test, then return here and tap SAVE + NEXT.")
+  }
+
+  const saveAndNext = async () => {
+    await saveSample()
+    const nextIndex = autoIndex + 1
+    if (nextIndex >= autoThreads.length) {
+      setAutoRunning(false)
+      setMessage("AUTO A/B complete · results for 1 / 2 / 3 / 4 threads are saved below. Restore 3 threads unless another result is clearly better.")
+      return
+    }
+    setAutoIndex(nextIndex)
+    const nextThreads = autoThreads[nextIndex]
+    stageThreads(nextThreads)
+    setMessage(`Saved ${activeThreads} threads · ${nextThreads} threads staged. Restart, repeat the same phrase/conditions, then SAVE + NEXT.`)
+  }
+
   return (
     <Screen preset="fixed" safeAreaEdges={["top"]} backgroundColor="#050208" className="px-0" statusBarStyle="light">
       <ScrollView
@@ -132,6 +157,20 @@ export default function ThreadPerformanceLab() {
           <RNText style={{color: activeThreads === stagedThreads ? "#6FE3A5" : "#F0C36B", fontSize: 12, marginTop: 6}}>
             {activeThreads === stagedThreads ? "Running selected configuration" : "Restart required before the staged value is active"}
           </RNText>
+        </View>
+
+        <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: "#4D2A66", borderRadius: 20, padding: 16, marginTop: 18}}>
+          <RNText style={{color: "white", fontSize: 17, fontWeight: "900"}}>AUTOMATIC 1 → 4 THREAD TEST</RNText>
+          <RNText style={{color: "#8F819B", fontSize: 11, lineHeight: 17, marginTop: 5}}>
+            Guides the same A/B run across every thread count while keeping each recognizer rebuild restart-safe.
+          </RNText>
+          <Pressable
+            onPress={() => (autoRunning ? void saveAndNext() : beginAutoTest())}
+            style={{backgroundColor: "#6D35A8", borderRadius: 13, padding: 12, alignItems: "center", marginTop: 12}}>
+            <RNText style={{color: "white", fontWeight: "900"}}>
+              {autoRunning ? `SAVE + NEXT · STEP ${autoIndex + 1}/4` : "START 1 / 2 / 3 / 4 TEST"}
+            </RNText>
+          </Pressable>
         </View>
 
         <RNText style={{color: "#B9A6C8", fontSize: 12, fontWeight: "900", letterSpacing: 1.2, marginTop: 24, marginBottom: 10}}>
