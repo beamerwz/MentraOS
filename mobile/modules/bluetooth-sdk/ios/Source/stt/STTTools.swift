@@ -65,7 +65,6 @@ class STTTools {
     static func didReceivePartialTranscription(_ text: String) {
         let g2TraceBridgeNs = DispatchTime.now().uptimeNanoseconds
         G2LabDiagnostics.markBridge(ns: g2TraceBridgeNs)
-        Bridge.log("G2LAB_TRACE T5_NATIVE_BRIDGE ns=\(g2TraceBridgeNs) final=false chars=\(text.count)")
         // Send partial result to server witgetConnectedBluetoothNameh proper formatting
         let transcriptionLanguage = eventLanguageTag(
             UserDefaults.standard.string(forKey: "STTModelLanguageCode") ?? "en-US"
@@ -88,7 +87,6 @@ class STTTools {
     static func didReceiveFinalTranscription(_ text: String) {
         let g2TraceBridgeNs = DispatchTime.now().uptimeNanoseconds
         G2LabDiagnostics.markBridge(ns: g2TraceBridgeNs)
-        Bridge.log("G2LAB_TRACE T5_NATIVE_BRIDGE ns=\(g2TraceBridgeNs) final=true chars=\(text.count)")
         // Send final result to server with proper formatting
         let transcriptionLanguage = eventLanguageTag(
             UserDefaults.standard.string(forKey: "STTModelLanguageCode") ?? "en-US"
