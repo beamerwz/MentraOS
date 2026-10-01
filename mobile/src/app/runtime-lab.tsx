@@ -30,6 +30,8 @@ function pcm16ToFloat32(input: ArrayBuffer): Float32Array {
 export default function RuntimeLab() {
   const [choice, setChoice] = useState<WhisperChoice>("tiny")
   const [running, setRunning] = useState(false)
+  const [committedText, setCommittedText] = useState("")
+  const [partialText, setPartialText] = useState("")
   const [message, setMessage] = useState("Choose a Whisper model, wait for READY, then test it with the G2 microphone.")
   const pcmSubscription = useRef<{remove: () => void} | null>(null)
 
@@ -67,7 +69,9 @@ export default function RuntimeLab() {
       setMessage("Starting ExecuTorch Whisper on the G2 PCM stream…")
       await BluetoothSdk.updateBluetoothSettings({should_send_pcm: true})
 
-      const streamPromise = whisper.stream({language: "it"})
+      setCommittedText("")
+      setPartialText("")
+      const stream = whisper.stream({language: "it"})
       pcmSubscription.current = BluetoothSdk.addListener("mic_pcm", (event) => {
         try {
           whisper.streamInsert(pcm16ToFloat32(event.pcm))
@@ -75,15 +79,23 @@ export default function RuntimeLab() {
           // The first packet can race stream initialization; later packets continue normally.
         }
       })
-      void streamPromise
-        .then(() => {
-          setRunning(false)
+      void (async () => {
+        try {
+          for await (const update of stream) {
+            if (update.committed.text) {
+              setCommittedText((previous) => previous + update.committed.text)
+            }
+            setPartialText(update.nonCommitted.text)
+          }
           setMessage("Whisper stream finished.")
-        })
-        .catch((error) => {
-          setRunning(false)
+        } catch (error) {
           setMessage(error instanceof Error ? error.message : String(error))
-        })
+        } finally {
+          setRunning(false)
+          pcmSubscription.current?.remove()
+          pcmSubscription.current = null
+        }
+      })()
     } catch (error) {
       setRunning(false)
       setMessage(error instanceof Error ? error.message : String(error))
@@ -171,8 +183,8 @@ export default function RuntimeLab() {
           <View style={{backgroundColor: "#08060B", borderRadius: 14, padding: 13, marginTop: 12, minHeight: 120}}>
             <RNText style={{color: "#756981", fontSize: 10, fontWeight: "900", letterSpacing: 1}}>LIVE WHISPER TEXT</RNText>
             <RNText style={{color: "white", fontSize: 16, lineHeight: 23, marginTop: 8}}>
-              {whisper.committedTranscription}
-              <RNText style={{color: SOFT}}>{whisper.nonCommittedTranscription}</RNText>
+              {committedText}
+              <RNText style={{color: SOFT}}>{partialText}</RNText>
             </RNText>
           </View>
         </View>
