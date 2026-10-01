@@ -36,6 +36,7 @@ interface SettingsProps {
   accentColor?: string
   accentForeground?: string
   onUpdateUseOfflineStt: (enabled: boolean) => Promise<boolean>
+  onOpenLanguageSelector: () => void
   onUpdateDisplayLines: (lines: number) => Promise<boolean>
   onUpdateDisplayWidth: (width: number) => Promise<boolean>
   onUpdateCaptionPosition: (position: CaptionPosition) => Promise<boolean>
@@ -51,6 +52,7 @@ export function Settings({
   accentColor = "#6DAEA6",
   accentForeground = "#FFFFFF",
   onUpdateUseOfflineStt,
+  onOpenLanguageSelector,
   onUpdateDisplayLines,
   onUpdateDisplayWidth,
   onUpdateCaptionPosition,
@@ -264,6 +266,25 @@ export function Settings({
                     useOfflineStt ? "translate-x-6" : "translate-x-1"
                   }`}
                 />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {G2_LABS && !useOfflineStt && (
+          <div className="bg-[#100b16] rounded-2xl p-4 border border-[#2d2039]">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-white font-['Red_Hat_Display']">Cloud language</p>
+                <p className="mt-1 text-xs text-[#9b8cae] font-['Red_Hat_Display']">
+                  {settings.language === "auto" ? "Auto detect" : settings.language}
+                  {settings.languageHints.length > 0 ? ` · hints: ${settings.languageHints.join(", ")}` : ""}
+                </p>
+              </div>
+              <button
+                onClick={onOpenLanguageSelector}
+                className="shrink-0 rounded-xl bg-[#6d35a8] px-3 py-2 text-[11px] font-bold text-white">
+                CHANGE LANGUAGE
               </button>
             </div>
           </div>
