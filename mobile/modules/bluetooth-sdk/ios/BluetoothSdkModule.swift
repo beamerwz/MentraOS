@@ -265,6 +265,14 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             G2LabDiagnostics.resetPipeline()
         }
 
+        Function("getSttInferenceThreads") { () -> Int in
+            SherpaOnnxTranscriber.configuredInferenceThreads
+        }
+
+        Function("setSttInferenceThreads") { (threads: Int) -> Int in
+            SherpaOnnxTranscriber.setConfiguredInferenceThreads(threads)
+        }
+
         Function("markG2LabDisplay") {
             G2LabDiagnostics.markDisplay(ns: DispatchTime.now().uptimeNanoseconds)
         }
