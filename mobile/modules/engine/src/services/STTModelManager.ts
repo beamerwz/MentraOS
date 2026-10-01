@@ -49,6 +49,7 @@ export interface RemoteCatalogModel {
   downloadMode: ModelDownloadMode
   detail: string
   tags: string[]
+  blockedReason?: string
 }
 
 export interface CurrentModelSummary {
@@ -70,6 +71,7 @@ export interface InstalledModelEntry {
   runnable: boolean
   current: boolean
   installedAt?: string
+  blockedReason?: string
 }
 
 export interface ModelSourceLink {
@@ -972,6 +974,37 @@ class STTModelManager {
   private safeCatalogId(id: string): string {
     const cleaned = id.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")
     return cleaned.slice(0, 96) || "remote-model"
+  }
+
+  private nativeSafetyBlock(...values: Array<string | undefined>): string | undefined {
+    if (Platform.OS !== "ios") return undefined
+    const haystack = values.filter(Boolean).join(" ").toLowerCase()
+    const isNemoFastConformerTransducer =
+      /nemo[-_. ]*fast[-_. ]*conformer/.test(haystack) && /transducer/.test(haystack)
+
+    if (isNemoFastConformerTransducer) {
+      return "Blocked on iOS: this NeMo FastConformer Transducer family hard-crashes the current Sherpa/ONNX Runtime decoder. Use the CTC variant or a curated G2 model instead."
+    }
+    return undefined
+  }
+
+  private applyNativeSafetyPolicy(model: RemoteCatalogModel): RemoteCatalogModel {
+    const blockedReason = this.nativeSafetyBlock(
+      model.id,
+      model.displayName,
+      model.fileName,
+      model.sourceUrl,
+      model.downloadUrl,
+      ...(model.tags ?? []),
+    )
+    return blockedReason
+      ? {
+          ...model,
+          blockedReason,
+          compatibility: "native-unverified",
+          detail: blockedReason,
+        }
+      : model
   }
 
   private async resolveValidModelPath(root: string, depth = 0): Promise<string | null> {
