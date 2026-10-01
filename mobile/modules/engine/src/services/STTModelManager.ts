@@ -317,6 +317,20 @@ class STTModelManager {
     }
   }
 
+  private friendlyModelNameFromPath(path: string): string {
+    const leaf = (path.split("/").pop() || "Custom Sherpa model").replace(/\.tar\.bz2$/i, "")
+    const lower = leaf.toLowerCase()
+    const nemotron = lower.match(/nemotron[^/]*?(80|160|320|560|1120)ms/)
+    if (nemotron) return `Nemotron 3.5 · ${nemotron[1]} ms`
+    if (lower.includes("kroko")) return "Italian Built-in · Kroko INT8"
+    return leaf
+      .replace(/^sherpa-onnx-/i, "")
+      .replace(/-int8-\d{4}-\d{2}-\d{2}$/i, "")
+      .replace(/[-_]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  }
+
   async getCurrentModelSummary(): Promise<CurrentModelSummary> {
     const path = await BluetoothSdk.getSttModelPath()
     if (!path) return {code: "", displayName: "No model selected", path: "", custom: false}
@@ -347,7 +361,7 @@ class STTModelManager {
       const leaf = path.split("/").pop() || "Sherpa model"
       return {
         code: "custom",
-        displayName: leaf === "custom" ? "Custom Sherpa model" : `Custom · ${leaf}`,
+        displayName: leaf === "custom" ? "Custom Sherpa model" : this.friendlyModelNameFromPath(path),
         path,
         custom: true,
       }
