@@ -37,7 +37,7 @@ async function ensureBundledCaptionsInstalled(): Promise<void> {
 
 /**
  * G2 LABS runtime bootstrap. Local captions remain the zero-login default,
- * while an optional Mentra Cloud session can be enabled after sign-in.
+ * while an optional Mentra Cloud V2 session can be enabled after sign-in.
  * Bundled Captions remains available without cloud or account access.
  */
 let bootPromise: Promise<void> | null = null
