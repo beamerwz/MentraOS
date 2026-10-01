@@ -634,12 +634,12 @@ export default function G2ModelLab() {
         </RNText>
         <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, padding: 14}}>
           <RNText style={{color: "#8F819B", fontSize: 12, lineHeight: 17, marginBottom: 10}}>
-            Search official Sherpa releases and selected model hubs. Compatible Sherpa models install + activate immediately; other runtimes stay clearly separated as download-only files.
+            Search only models that this build can actually validate and run with Sherpa-ONNX. Incompatible runtime families are hidden instead of cluttering the catalog.
           </RNText>
           <TextInput
             value={browserQuery}
             onChangeText={setBrowserQuery}
-            placeholder="italian, streaming, nemotron, whisper…"
+            placeholder="italian, streaming, nemotron, zipformer…"
             placeholderTextColor="#6A5C77"
             autoCapitalize="none"
             autoCorrect={false}
@@ -750,49 +750,41 @@ export default function G2ModelLab() {
           VOICE RUNTIMES
         </RNText>
         <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, padding: 14}}>
-          {[
-            {
-              name: "Sherpa-ONNX",
-              status: "INSTALLED",
-              detail: "Native G2 LABS streaming runtime. Recommended and currently supported.",
-              source: "https://github.com/k2-fsa/sherpa-onnx",
-            },
-            {
-              name: "whisper.cpp",
-              status: "NOT INSTALLED",
-              detail: "Models can be stored in your library now. Native iOS runtime adapter is the next integration step.",
-              source: "https://github.com/ggml-org/whisper.cpp",
-            },
-            {
-              name: "Vosk",
-              status: "NOT INSTALLED",
-              detail: "Models are never shown as installed unless the runtime adapter is actually present.",
-              source: "https://alphacephei.com/vosk/",
-            },
-          ].map((runtime, index) => (
-            <View
-              key={runtime.name}
-              style={{paddingVertical: 11, borderTopWidth: index === 0 ? 0 : 1, borderTopColor: "#241A2D"}}>
-              <View style={{flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10}}>
-                <RNText style={{color: "white", fontSize: 14, fontWeight: "900"}}>{runtime.name}</RNText>
-                <RNText
-                  style={{
-                    color: runtime.status === "INSTALLED" ? "#6FE3A5" : "#8F819B",
-                    fontSize: 10,
-                    fontWeight: "900",
-                  }}>
-                  {runtime.status}
-                </RNText>
-              </View>
-              <RNText style={{color: "#756981", fontSize: 11, lineHeight: 16, marginTop: 4}}>{runtime.detail}</RNText>
-              <View style={{marginTop: 8, alignSelf: "flex-start"}}>
-                <ActionButton label="RUNTIME SOURCE" secondary onPress={() => void Linking.openURL(runtime.source)} />
-              </View>
+          <View style={{paddingVertical: 8}}>
+            <View style={{flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10}}>
+              <RNText style={{color: "white", fontSize: 14, fontWeight: "900"}}>Sherpa-ONNX</RNText>
+              <RNText style={{color: "#6FE3A5", fontSize: 10, fontWeight: "900"}}>BUILT IN · LIVE</RNText>
             </View>
-          ))}
-          <RNText style={{color: "#6F6279", fontSize: 10, lineHeight: 15, marginTop: 8}}>
-            iOS cannot safely install executable speech engines after the IPA is signed. G2 LABS can download models/data here,
-            but new native runtimes must be integrated into a new IPA build.
+            <RNText style={{color: "#756981", fontSize: 11, lineHeight: 16, marginTop: 4}}>
+              Production G2 Captions runtime · streaming Transducer and supported online CTC packages.
+            </RNText>
+          </View>
+
+          <View style={{paddingVertical: 12, borderTopWidth: 1, borderTopColor: "#241A2D"}}>
+            <View style={{flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10}}>
+              <RNText style={{color: "white", fontSize: 14, fontWeight: "900"}}>ExecuTorch · Whisper</RNText>
+              <RNText style={{color: "#6FE3A5", fontSize: 10, fontWeight: "900"}}>BUNDLED · TESTABLE</RNText>
+            </View>
+            <RNText style={{color: "#756981", fontSize: 11, lineHeight: 16, marginTop: 4}}>
+              Native iOS multilingual Whisper Tiny / Base / Small. Test it directly against the G2 PCM stream without another IPA rebuild.
+            </RNText>
+            <View style={{marginTop: 9, alignSelf: "flex-start"}}>
+              <ActionButton label="OPEN RUNTIME LAB" onPress={() => router.push("/runtime-lab")} />
+            </View>
+          </View>
+
+          <View style={{paddingVertical: 12, borderTopWidth: 1, borderTopColor: "#241A2D"}}>
+            <View style={{flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10}}>
+              <RNText style={{color: "white", fontSize: 14, fontWeight: "900"}}>Vosk</RNText>
+              <RNText style={{color: "#8F819B", fontSize: 10, fontWeight: "900"}}>NOT AVAILABLE · iOS</RNText>
+            </View>
+            <RNText style={{color: "#756981", fontSize: 11, lineHeight: 16, marginTop: 4}}>
+              Not advertised as installed: upstream currently does not publish a maintained iOS runtime artifact we can safely bundle. Vosk models are excluded from Search.
+            </RNText>
+          </View>
+
+          <RNText style={{color: "#6F6279", fontSize: 10, lineHeight: 15, marginTop: 5}}>
+            Model Search only shows packages runnable by an engine that is actually present in this IPA.
           </RNText>
         </View>
 
