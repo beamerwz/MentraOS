@@ -2611,7 +2611,11 @@ class LocalMiniappRuntime {
 
   private readonly simpleStorage = new LocalMiniappStorage({
     backend: localMiniappStorageBackend,
-    getUserId: () => cloudClientService.resolveMentraUserId(),
+    // G2 LABS must keep Captions settings usable before any cloud sign-in.
+    getUserId: () =>
+      process.env.EXPO_PUBLIC_G2_LABS === "1"
+        ? Promise.resolve("g2-labs-local")
+        : cloudClientService.resolveMentraUserId(),
   })
 
   /**
