@@ -264,6 +264,10 @@ export default function G2ModelLab() {
   const appVersion = Application.nativeApplicationVersion || "3.1.5"
   const readyLibraryModels = installedModels.filter((entry) => entry.runnable)
   const downloadedFiles = installedModels.filter((entry) => !entry.runnable)
+  const pendingNextLaunch =
+    Boolean(currentModel.path) &&
+    Boolean(diagnostics.modelPath) &&
+    currentModel.path !== diagnostics.modelPath
 
   const activate = async (code: string) => {
     try {
@@ -419,6 +423,10 @@ export default function G2ModelLab() {
   }
 
   const handleRemoteModel = async (model: RemoteCatalogModel) => {
+    if (model.blockedReason) {
+      setStatus(model.blockedReason)
+      return
+    }
     const installed = installedModels.find((entry) => entry.id === model.id)
     if (installed) {
       if (installed.runnable) await useInstalled(installed)
@@ -566,7 +574,7 @@ export default function G2ModelLab() {
                         : selected
                           ? "ACTIVE"
                           : downloaded
-                            ? "SWITCH"
+                            ? "STAGE"
                             : "GET"
                     }
                     onPress={() => void activate(item.code)}
@@ -621,7 +629,7 @@ export default function G2ModelLab() {
                 </View>
                 <View style={{flexDirection: "row", gap: 8, marginTop: 10, flexWrap: "wrap"}}>
                   <ActionButton
-                    label={entry.current ? "SELECTED" : busy === `library:${entry.id}` ? "LOADING…" : "SWITCH"}
+                    label={entry.current ? "SELECTED" : busy === `library:${entry.id}` ? "LOADING…" : "STAGE"}
                     onPress={() => void useInstalled(entry)}
                     disabled={!!busy || entry.current}
                   />
@@ -660,7 +668,7 @@ export default function G2ModelLab() {
         {downloadedFiles.length > 0 && (
           <>
             <RNText style={{color: "#8F7FA3", fontSize: 11, fontWeight: "900", letterSpacing: 1.2, marginTop: 18, marginBottom: 8}}>
-              DOWNLOADED FILES · RUNTIME NOT INSTALLED
+              DOWNLOADED FILES · NOT CURRENTLY RUNNABLE
             </RNText>
             <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, padding: 14}}>
               {downloadedFiles.map((entry, index) => (
@@ -670,8 +678,8 @@ export default function G2ModelLab() {
                   <RNText style={{color: "white", fontWeight: "800", fontSize: 13}} numberOfLines={2}>
                     {entry.displayName}
                   </RNText>
-                  <RNText style={{color: "#756981", fontSize: 11, marginTop: 4}}>
-                    {entry.runtime} · downloaded only · cannot be selected yet
+                  <RNText style={{color: entry.blockedReason ? "#F0C36B" : "#756981", fontSize: 11, marginTop: 4, lineHeight: 16}}>
+                    {entry.blockedReason ?? `${entry.runtime} · downloaded only · runtime adapter required`}
                   </RNText>
                   <View style={{flexDirection: "row", gap: 8, marginTop: 9}}>
                     {entry.sourceUrl ? (
@@ -695,7 +703,7 @@ export default function G2ModelLab() {
         </RNText>
         <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, padding: 14}}>
           <RNText style={{color: "#8F819B", fontSize: 12, lineHeight: 17, marginBottom: 10}}>
-            Search only models that this build can actually validate and run with Sherpa-ONNX. Incompatible runtime families are hidden instead of cluttering the catalog.
+            Search Sherpa-ONNX models that this build can validate. Known native-crash families are shown as BLOCKED instead of being allowed to stage.
           </RNText>
           <TextInput
             value={browserQuery}
@@ -727,7 +735,9 @@ export default function G2ModelLab() {
             const installed = installedModels.find((entry) => entry.id === model.id)
             const direct = !!model.downloadUrl || !!model.directFiles?.length
             const action =
-              installed?.runnable
+              model.blockedReason
+                ? "BLOCKED"
+                : installed?.runnable
                 ? installed.current
                   ? "ACTIVE"
                   : "STAGE"
@@ -750,8 +760,13 @@ export default function G2ModelLab() {
                   <ActionButton
                     label={busy === `remote:${model.id}` ? (progress > 0 ? `${progress}%` : "WORKING…") : action}
                     onPress={() => void handleRemoteModel(model)}
-                    disabled={!!busy || installed?.current === true || (installed != null && installed.runnable === false)}
-                    secondary={!direct || installed != null}
+                    disabled={
+                      !!busy ||
+                      !!model.blockedReason ||
+                      installed?.current === true ||
+                      (installed != null && installed.runnable === false)
+                    }
+                    secondary={!direct || installed != null || !!model.blockedReason}
                   />
                   <ActionButton label="SOURCE" secondary onPress={() => void Linking.openURL(model.sourceUrl)} />
                   {installed ? (
@@ -852,6 +867,13 @@ export default function G2ModelLab() {
         <View style={{backgroundColor: CARD, borderRadius: 20, padding: 17, marginTop: 22, borderWidth: 1, borderColor: BORDER}}>
           <RNText style={{color: "white", fontSize: 18, fontWeight: "900"}}>MODEL RUNTIME</RNText>
           <RNText style={{color: runtimeState.color, marginTop: 9, fontWeight: "900"}}>{runtimeState.label}</RNText>
+          {pendingNextLaunch && (
+            <View style={{marginTop: 10, backgroundColor: "#1B1320", borderRadius: 11, padding: 10}}>
+              <RNText style={{color: "#F0C36B", fontSize: 10, fontWeight: "900"}}>NEXT LAUNCH MODEL</RNText>
+              <RNText style={{color: "white", fontSize: 12, fontWeight: "800", marginTop: 3}}>{currentModel.displayName}</RNText>
+              <RNText style={{color: "#8F819B", fontSize: 10, marginTop: 3}}>Live recognizer remains unchanged until a clean reopen.</RNText>
+            </View>
+          )}
           {!!diagnostics.lastError && <RNText style={{color: "#FF829B", marginTop: 8, fontSize: 12}}>Last error: {diagnostics.lastError}</RNText>}
         </View>
 
