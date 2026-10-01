@@ -28,6 +28,55 @@ class STTTools {
         return stagedModel?.languageCode ?? UserDefaults.standard.string(forKey: "STTModelLanguageCode")
     }
 
+    static func runtimeForRecognizer() -> String {
+        guard let path = modelPathForRecognizer() else { return "sherpa-onnx" }
+        return runtimeForModelPath(path)
+    }
+
+    static func runtimeForModelPath(_ path: String) -> String {
+        let metadata = (path as NSString).appendingPathComponent(".g2labs-model.json")
+        if let data = FileManager.default.contents(atPath: metadata),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let runtime = object["runtime"] as? String,
+           !runtime.isEmpty
+        {
+            return runtime
+        }
+        if whisperCppModelFile(in: path) != nil { return "whisper.cpp" }
+        return "sherpa-onnx"
+    }
+
+    static func whisperCppModelFile(in directory: String) -> String? {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(
+            at: URL(fileURLWithPath: directory),
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return nil }
+
+        var inspected = 0
+        for case let url as URL in enumerator {
+            inspected += 1
+            if inspected > 128 { break }
+            if url.pathExtension.lowercased() == "bin",
+               url.lastPathComponent.lowercased().contains("ggml") ||
+               runtimeMetadataSaysWhisper(directory)
+            {
+                return url.path
+            }
+        }
+        return nil
+    }
+
+    private static func runtimeMetadataSaysWhisper(_ directory: String) -> Bool {
+        let metadata = (directory as NSString).appendingPathComponent(".g2labs-model.json")
+        guard let data = FileManager.default.contents(atPath: metadata),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let runtime = object["runtime"] as? String
+        else { return false }
+        return runtime == "whisper.cpp"
+    }
+
     static func stageSttModelDetails(_ path: String, _ languageCode: String) {
         stagedModel = (path, languageCode)
     }
@@ -276,6 +325,9 @@ class STTTools {
         guard let modelPath = UserDefaults.standard.string(forKey: "STTModelPath") else {
             return false
         }
+        if runtimeForModelPath(modelPath) == "whisper.cpp" {
+            return whisperCppModelFile(in: modelPath) != nil
+        }
 
         let fileManager = FileManager.default
 
@@ -306,6 +358,10 @@ class STTTools {
     }
 
     static func validateSTTModel(_ path: String) -> Bool {
+        if runtimeForModelPath(path) == "whisper.cpp" {
+            return whisperCppModelFile(in: path) != nil
+        }
+
         // do {
         let fileManager = FileManager.default
 
