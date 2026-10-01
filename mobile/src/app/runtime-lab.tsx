@@ -57,11 +57,8 @@ export default function RuntimeLab() {
     return () => {
       pcmSubscription.current?.remove()
       pcmSubscription.current = null
-      try {
-        whisper.streamStop()
-      } catch {}
     }
-  }, [whisper])
+  }, [])
 
   const start = async () => {
     if (!whisper.isReady || running) return
