@@ -10,6 +10,7 @@ on:
       - g2-labs-latency-lab
       - g2-labs-ui-3.1.2-dark-purple
       - g2-labs-3.1.3-search-v2
+      - g2-labs-3.1.4-integrated-ui-library
     paths:
       - "mobile/**"
       - ".github/workflows/g2-access-ios-unsigned.yml"
