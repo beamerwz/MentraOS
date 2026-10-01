@@ -427,6 +427,20 @@ class STTModelManager {
     return result
   }
 
+  private async directoryHasModelPayload(modelPath: string): Promise<boolean> {
+    if (!(await RNFS.exists(modelPath))) return false
+    const entries = await RNFS.readDir(modelPath)
+    for (const entry of entries) {
+      if (entry.name === CUSTOM_METADATA) continue
+      if (entry.isFile() && Number(entry.size ?? 0) > 1024) return true
+      if (entry.isDirectory()) {
+        const nested = await RNFS.readDir(entry.path)
+        if (nested.some((child) => child.name !== CUSTOM_METADATA && Number(child.size ?? 0) > 1024)) return true
+      }
+    }
+    return false
+  }
+
   async listInstalledModels(): Promise<InstalledModelEntry[]> {
     const currentPath = await BluetoothSdk.getSttModelPath()
     const roots = [
@@ -443,6 +457,7 @@ class STTModelManager {
     for (const modelPath of dirs) {
       const metadata = await this.readModelMetadata(modelPath)
       if (!metadata) continue
+      if (!(await this.directoryHasModelPayload(modelPath))) continue
       const runnable =
         metadata.runtime === "sherpa-onnx"
           ? await BluetoothSdk.validateSttModel(modelPath)
@@ -1066,9 +1081,8 @@ class STTModelManager {
 
   private fetchVoskCatalog(query: string): RemoteCatalogModel[] {
     const needle = query.trim().toLowerCase()
-    const matchesItalian =
-      !needle || ["italian", "italiano", "it", "vosk"].some((term) => needle.includes(term) || term.includes(needle))
-    if (!matchesItalian) return []
+    const explicitVosk = !needle || needle.includes("vosk")
+    if (!explicitVosk) return []
 
     return [
       {
