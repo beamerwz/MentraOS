@@ -1211,6 +1211,28 @@ struct ViewState {
         #endif
     }
 
+    /// Stage a model selection for the next clean process launch.
+    /// This path NEVER initializes, tears down, or swaps a Sherpa/ORT recognizer
+    /// in the current process. Model Lab uses this for all user-driven switches
+    /// so a custom model can never crash the running G2 session merely by tapping
+    /// SWITCH.
+    func stageSttModel(path: String, languageCode: String) -> Bool {
+        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+        guard STTTools.validateSTTModel(path) else {
+            let message = "STT stage rejected: model files are incomplete at \(path)"
+            Bridge.log(message)
+            G2LabDiagnostics.markError(message)
+            return false
+        }
+        STTTools.stageCandidateForActivation(path, languageCode)
+        G2LabDiagnostics.markModel(state: "staged-relaunch", path: path)
+        Bridge.log("STT model staged without in-process ORT construction: \(path)")
+        return true
+        #else
+        return false
+        #endif
+    }
+
     /// Persist a candidate model without tearing down and recreating ONNX Runtime
     /// in the same process. The iOS Sherpa XCFramework can invalidate ORT's global
     /// C++ API during an in-process recognizer teardown/recreate, which produces an
