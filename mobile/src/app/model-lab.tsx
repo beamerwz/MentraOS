@@ -1,5 +1,14 @@
 import {useEffect, useMemo, useState} from "react"
-import {ActivityIndicator, Linking, Pressable, ScrollView, Text as RNText, TextInput, View} from "react-native"
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Pressable,
+  ScrollView,
+  Text as RNText,
+  TextInput,
+  View,
+} from "react-native"
 import * as Application from "expo-application"
 import * as DocumentPicker from "expo-document-picker"
 import * as RNFS from "@dr.pogodin/react-native-fs"
@@ -7,11 +16,12 @@ import {router} from "expo-router"
 
 import {Screen} from "@/components/ignite"
 import {sttModelManager as STT} from "@mentra/engine-host-internal"
-import type {CurrentModelSummary, RemoteCatalogModel} from "@mentra/engine-host-internal"
+import type {
+  CurrentModelSummary,
+  InstalledModelEntry,
+  RemoteCatalogModel,
+} from "@mentra/engine-host-internal"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-
-// The unsigned G2 IPA workflow is mobile/**-triggered but rebuilds the Captions
-// miniapp from branch HEAD, so keep this host-side lab tied to that bundle path.
 
 type NativeDiagnostics = {
   modelState?: string
@@ -70,6 +80,19 @@ type Metrics = {
 }
 
 const EMPTY_DIAGNOSTICS: NativeDiagnostics = {}
+const PURPLE = "#A855F7"
+const PURPLE_SOFT = "#C4B5FD"
+const CARD = "#100B16"
+const BORDER = "#2D2039"
+
+const RECOMMENDED = [
+  {code: "it", title: "Italian Built-in · Kroko INT8", sub: "Accuracy / recovery baseline"},
+  {code: "nemotron_it_80", title: "Nemotron 3.5 · 80 ms", sub: "Fastest streaming partials"},
+  {code: "nemotron_it_160", title: "Nemotron 3.5 · 160 ms", sub: "Fast / balanced"},
+  {code: "nemotron_it_320", title: "Nemotron 3.5 · 320 ms", sub: "Balanced context"},
+  {code: "nemotron_it_560", title: "Nemotron 3.5 · 560 ms", sub: "More context / accuracy"},
+  {code: "nemotron_it_1120", title: "Nemotron 3.5 · 1120 ms", sub: "Maximum context benchmark"},
+] as const
 
 function metric(value: number | undefined, decimals = 0): string {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "—"
@@ -90,9 +113,9 @@ function modelStateLabel(state: string | undefined): {label: string; color: stri
     case "ready":
       return {label: "READY · recognizer live", color: "#6fe3a5"}
     case "initializing":
-      return {label: "INITIALIZING · model loading off BLE thread", color: "#b989ff"}
+      return {label: "INITIALIZING · model loading", color: PURPLE_SOFT}
     case "staged-relaunch":
-      return {label: "STAGED · close/reopen G2 LABS to swap model", color: "#f0c36b"}
+      return {label: "STAGED · close/reopen once to swap safely", color: "#f0c36b"}
     case "failed":
       return {label: "FAILED · see error below", color: "#ff6b8a"}
     case "no-model":
@@ -100,6 +123,37 @@ function modelStateLabel(state: string | undefined): {label: string; color: stri
     default:
       return {label: "UNKNOWN", color: "#8d809b"}
   }
+}
+
+function ActionButton({
+  label,
+  onPress,
+  secondary = false,
+  danger = false,
+  disabled = false,
+}: {
+  label: string
+  onPress: () => void
+  secondary?: boolean
+  danger?: boolean
+  disabled?: boolean
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({pressed}) => ({
+        opacity: disabled ? 0.45 : pressed ? 0.75 : 1,
+        backgroundColor: danger ? "#32111C" : secondary ? "#21182B" : "#6D35A8",
+        borderWidth: 1,
+        borderColor: danger ? "#6B2438" : secondary ? "#392B49" : "#7C3AED",
+        paddingHorizontal: 12,
+        paddingVertical: 9,
+        borderRadius: 11,
+      })}>
+      <RNText style={{color: danger ? "#FF93AA" : "white", fontSize: 11, fontWeight: "800"}}>{label}</RNText>
+    </Pressable>
+  )
 }
 
 export default function G2ModelLab() {
@@ -112,6 +166,8 @@ export default function G2ModelLab() {
   const [browserModels, setBrowserModels] = useState<RemoteCatalogModel[]>([])
   const [browserLoading, setBrowserLoading] = useState(false)
   const [browserError, setBrowserError] = useState("")
+  const [installedModels, setInstalledModels] = useState<InstalledModelEntry[]>([])
+  const [presetDownloaded, setPresetDownloaded] = useState<Record<string, boolean>>({})
   const [currentModel, setCurrentModel] = useState<CurrentModelSummary>({
     code: "",
     displayName: "Loading current model…",
@@ -146,13 +202,35 @@ export default function G2ModelLab() {
     }
   }
 
+  const refreshLibrary = async () => {
+    try {
+      setInstalledModels(await STT.listInstalledModels())
+    } catch (error) {
+      console.warn("G2 Model Lab: library refresh failed", error)
+    }
+  }
+
+  const refreshPresetDownloads = async () => {
+    const next: Record<string, boolean> = {}
+    for (const item of RECOMMENDED) {
+      try {
+        next[item.code] = (await STT.getLanguageInfo(item.code)).downloaded
+      } catch {
+        next[item.code] = false
+      }
+    }
+    setPresetDownloaded(next)
+  }
+
+  const refreshModelState = async () => {
+    await Promise.all([refreshCurrentModel(), refreshLibrary(), refreshPresetDownloads()])
+  }
+
   useEffect(() => {
     void STT.getCurrentLanguageFromPreferences().then((value) => value && setCurrent(value))
-    void refreshCurrentModel()
+    void refreshModelState()
     void refreshDiagnostics()
-    const timer = setInterval(() => {
-      void refreshDiagnostics()
-    }, 500)
+    const timer = setInterval(() => void refreshDiagnostics(), 500)
     return () => clearInterval(timer)
   }, [])
 
@@ -182,33 +260,24 @@ export default function G2ModelLab() {
   )
 
   const runtimeState = modelStateLabel(diagnostics.modelState)
-  const appVersion = Application.nativeApplicationVersion || "3.1.3"
+  const appVersion = Application.nativeApplicationVersion || "3.1.4"
 
   const activate = async (code: string) => {
     try {
       setBusy(code)
       setProgress(0)
-      setStatus("Preparing model…")
       const info = await STT.getLanguageInfo(code)
       if (!info.downloaded) {
+        setStatus(`Downloading ${info.displayName}…`)
         await STT.downloadModel(code, (p) => setProgress(p.percentage))
       }
-
       setStatus("Validating + loading model…")
       await STT.activateLanguage(code)
-      setCurrent(code)
-      await refreshCurrentModel()
-
+      await refreshModelState()
       const snapshot = await refreshDiagnostics()
-      if (snapshot?.modelState === "ready") {
-        setStatus("MODEL LIVE · open Captions and speak")
-      } else if (snapshot?.modelState === "staged-relaunch") {
-        setStatus("MODEL STAGED · fully close and reopen G2 LABS once to switch safely")
-      } else if (snapshot?.modelState === "failed") {
-        setStatus(snapshot.lastError || "Model initialization failed")
-      } else {
-        setStatus("Model selected · native runtime is finishing initialization")
-      }
+      if (snapshot?.modelState === "ready") setStatus("MODEL LIVE · open Captions and speak")
+      else if (snapshot?.modelState === "staged-relaunch") setStatus("MODEL STAGED · close/reopen once")
+      else setStatus("Model selected · runtime finishing initialization")
     } catch (error: any) {
       setStatus(error?.message ?? "Model activation failed")
       await refreshDiagnostics()
@@ -222,32 +291,20 @@ export default function G2ModelLab() {
     try {
       const picked = await DocumentPicker.getDocumentAsync({type: "*/*", copyToCacheDirectory: true})
       if (picked.canceled) return
-
       const asset = picked.assets[0]
       setBusy("custom")
-      setStatus("Extracting + validating custom Sherpa model…")
-
+      setStatus("Installing custom Sherpa model…")
       const temp = `${RNFS.TemporaryDirectoryPath}/g2labs-custom-model.tar.bz2`
       if (await RNFS.exists(temp)) await RNFS.unlink(temp)
       const source = decodeURIComponent(asset.uri.replace("file://", ""))
       await RNFS.copyFile(source, temp)
-
       await STT.importCustomArchive(temp, "it-IT", asset.name || "Custom Sherpa model")
-      setCurrent("custom")
-      await refreshCurrentModel()
-
-      const snapshot = await refreshDiagnostics()
-      if (snapshot?.modelState === "ready") {
-        setStatus(`CUSTOM MODEL LIVE · ${asset.name}`)
-      } else if (snapshot?.modelState === "staged-relaunch") {
-        setStatus(`Custom selected · ${asset.name} · close/reopen once to switch safely`)
-      } else {
-        setStatus(`Custom selected · ${asset.name}`)
-      }
       await RNFS.unlink(temp).catch(() => undefined)
+      await refreshModelState()
+      setStatus(`INSTALLED + SELECTED · ${asset.name}`)
+      await refreshDiagnostics()
     } catch (error: any) {
       setStatus(error?.message ?? "Custom import failed")
-      await refreshDiagnostics()
     } finally {
       setBusy(null)
     }
@@ -257,9 +314,7 @@ export default function G2ModelLab() {
     try {
       setBrowserLoading(true)
       setBrowserError("")
-      const models = await STT.browseRemoteModels(browserQuery)
-      setBrowserModels(models)
-      if (models.length === 0) setBrowserError("No models matched this search.")
+      setBrowserModels(await STT.browseRemoteModels(browserQuery))
     } catch (error: any) {
       setBrowserError(error?.message ?? "Could not load model sources")
     } finally {
@@ -267,7 +322,60 @@ export default function G2ModelLab() {
     }
   }
 
-  const testRemoteModel = async (model: RemoteCatalogModel) => {
+  const useInstalled = async (entry: InstalledModelEntry) => {
+    try {
+      setBusy(`library:${entry.id}`)
+      setStatus(`Loading ${entry.displayName}…`)
+      await STT.activateInstalledModel(entry.path)
+      await refreshModelState()
+      await refreshDiagnostics()
+      setStatus(`SELECTED · ${entry.displayName}`)
+    } catch (error: any) {
+      setStatus(error?.message ?? "Could not activate downloaded model")
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const deleteInstalled = (entry: InstalledModelEntry) => {
+    Alert.alert(
+      "Delete downloaded model?",
+      entry.current
+        ? `${entry.displayName} is active. G2 Glasses will switch back to Italian Built-in before deleting it.`
+        : entry.displayName,
+      [
+        {text: "Cancel", style: "cancel"},
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              try {
+                setBusy(`delete:${entry.id}`)
+                await STT.deleteInstalledModel(entry.path)
+                await refreshModelState()
+                await refreshDiagnostics()
+                setStatus(`Deleted · ${entry.displayName}`)
+              } catch (error: any) {
+                setStatus(error?.message ?? "Could not delete model")
+              } finally {
+                setBusy(null)
+              }
+            })()
+          },
+        },
+      ],
+    )
+  }
+
+  const handleRemoteModel = async (model: RemoteCatalogModel) => {
+    const installed = installedModels.find((entry) => entry.id === model.id)
+    if (installed) {
+      if (installed.runnable) await useInstalled(installed)
+      else setStatus(`DOWNLOADED · ${installed.displayName} · ${installed.runtime} adapter required`)
+      return
+    }
+
     const hasDirectDownload = !!model.downloadUrl || !!model.directFiles?.length
     if (!hasDirectDownload) {
       await Linking.openURL(model.sourceUrl)
@@ -277,29 +385,20 @@ export default function G2ModelLab() {
     try {
       setBusy(`remote:${model.id}`)
       setProgress(0)
-
       if (model.downloadMode === "test") {
-        setStatus(`QUARANTINE · downloading ${model.displayName}`)
+        setStatus(`Downloading + installing ${model.displayName}…`)
         await STT.downloadAndTestCatalogModel(model, (p) => setProgress(p.percentage))
-        setCurrent("custom")
-        await refreshCurrentModel()
-        const snapshot = await refreshDiagnostics()
-        if (snapshot?.modelState === "staged-relaunch") {
-          setStatus(`SAFE TEST STAGED · ${model.displayName} · fully close/reopen once`)
-        } else if (snapshot?.modelState === "ready") {
-          setStatus(`REMOTE MODEL LIVE · ${model.displayName}`)
-        } else {
-          setStatus(`Model validated and staged · ${model.displayName}`)
-        }
+        await refreshModelState()
+        await refreshDiagnostics()
+        setStatus(`INSTALLED + SELECTED · ${model.displayName}`)
       } else {
-        setStatus(`DOWNLOADING · ${model.displayName}`)
+        setStatus(`Downloading ${model.displayName}…`)
         await STT.downloadCatalogModelToLibrary(model, (p) => setProgress(p.percentage))
-        setStatus(
-          `DOWNLOADED · ${model.displayName} · saved in G2 LABS library · ${model.runtime} runtime adapter required before use`,
-        )
+        await refreshLibrary()
+        setStatus(`DOWNLOADED · ${model.displayName} · waiting for ${model.runtime} runtime adapter`)
       }
     } catch (error: any) {
-      setStatus(error?.message ?? "Remote model download/test failed safely")
+      setStatus(error?.message ?? "Remote model download failed safely")
       await refreshDiagnostics()
     } finally {
       setBusy(null)
@@ -318,37 +417,6 @@ export default function G2ModelLab() {
     }
   }
 
-  const Card = ({code, title, sub}: {code: string; title: string; sub: string}) => (
-    <Pressable
-      onPress={() => void activate(code)}
-      disabled={!!busy}
-      style={{
-        backgroundColor: "#15111d",
-        borderWidth: 1,
-        borderColor: current === code ? "#9b5cff" : "#30263d",
-        borderRadius: 18,
-        padding: 16,
-        marginBottom: 12,
-      }}>
-      <RNText style={{color: "white", fontSize: 17, fontWeight: "700"}}>{title}</RNText>
-      <RNText style={{color: "#a99db8", marginTop: 4}}>{sub}</RNText>
-      <RNText
-        style={{
-          color: current === code ? "#b989ff" : "#766985",
-          marginTop: 8,
-          fontWeight: "600",
-        }}>
-        {busy === code
-          ? progress > 0
-            ? `Preparing… ${progress}%`
-            : "Preparing…"
-          : current === code
-            ? "● SELECTED"
-            : "Tap to download / activate"}
-      </RNText>
-    </Pressable>
-  )
-
   const pipeline = [
     ["G2 LC3 packets", diagnostics.lc3AgeMs],
     ["LC3 → PCM", diagnostics.pcmAgeMs],
@@ -360,318 +428,259 @@ export default function G2ModelLab() {
   ] as const
 
   return (
-    <Screen preset="fixed" style={{backgroundColor: "#09070d"}}>
-      <ScrollView contentContainerStyle={{padding: 22, paddingTop: 60, paddingBottom: 60}}>
-        <Pressable onPress={() => router.back()}>
-          <RNText style={{color: "#b989ff", fontSize: 16}}>‹ Back</RNText>
+    <Screen
+      preset="fixed"
+      safeAreaEdges={["top"]}
+      backgroundColor="#050208"
+      className="px-0"
+      statusBarStyle="light">
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerStyle={{paddingHorizontal: 20, paddingTop: 10, paddingBottom: 64}}>
+        <Pressable onPress={() => router.back()} style={{paddingVertical: 8}}>
+          <RNText style={{color: PURPLE_SOFT, fontSize: 16}}>‹ Back</RNText>
         </Pressable>
 
-        <RNText style={{color: "white", fontSize: 32, fontWeight: "800", marginTop: 18}}>
-          G2 MODEL LAB
-        </RNText>
-        <RNText style={{color: "#9b8cae", fontSize: 15, marginTop: 6, marginBottom: 18}}>
-          Offline speech-engine lab · Italian · v{appVersion}
+        <RNText style={{color: "white", fontSize: 31, fontWeight: "900", marginTop: 8}}>Model Lab</RNText>
+        <RNText style={{color: "#8F819B", fontSize: 14, marginTop: 5, marginBottom: 18}}>
+          G2 Glasses · local speech models · v{appVersion}
         </RNText>
 
-        <View
-          style={{
-            backgroundColor: "#130C1B",
-            borderWidth: 1,
-            borderColor: "#6D35A8",
-            borderRadius: 18,
-            padding: 16,
-            marginBottom: 18,
-          }}>
-          <RNText style={{color: "#8F7FA3", fontSize: 11, fontWeight: "800", letterSpacing: 1.2}}>
-            CURRENT MODEL
-          </RNText>
-          <RNText style={{color: "white", fontSize: 19, fontWeight: "800", marginTop: 6}}>
-            {currentModel.displayName}
-          </RNText>
-          <RNText style={{color: "#B989FF", marginTop: 6, fontSize: 12}}>
-            {currentModel.custom ? "CUSTOM / DOWNLOADED" : "G2 LABS PRESET"}
-            {currentModel.source ? ` · ${currentModel.source}` : ""}
+        <View style={{backgroundColor: "#160C20", borderColor: "#6D35A8", borderWidth: 1, borderRadius: 20, padding: 16}}>
+          <RNText style={{color: "#8F7FA3", fontSize: 10, fontWeight: "900", letterSpacing: 1.2}}>ACTIVE MODEL</RNText>
+          <RNText style={{color: "white", fontSize: 19, fontWeight: "900", marginTop: 6}}>{currentModel.displayName}</RNText>
+          <RNText style={{color: PURPLE_SOFT, fontSize: 12, marginTop: 5}}>
+            {currentModel.source || (currentModel.custom ? "Downloaded / custom" : "G2 Glasses preset")}
           </RNText>
         </View>
 
-        <Card code="it" title="Italian Built-in" sub="Known-good Kroko INT8 · recovery baseline" />
-        <Card
-          code="nemotron_it_80"
-          title="Nemotron 3.5 · 80 ms ⚡ ULTRA"
-          sub="Lowest-latency multilingual streaming preset"
-        />
-        <Card
-          code="nemotron_it_160"
-          title="Nemotron 3.5 · 160 ms ⚡ FAST"
-          sub="Latency / accuracy balance"
-        />
-
-        <RNText style={{color: "#b989ff", fontSize: 14, fontWeight: "800", marginTop: 8, marginBottom: 10}}>
-          CURATED DOWNLOADS · MULTILINGUAL NEMOTRON 3.5
+        <RNText style={{color: "#B9A6C8", fontSize: 12, fontWeight: "900", letterSpacing: 1.2, marginTop: 26, marginBottom: 10}}>
+          RECOMMENDED
         </RNText>
-        <Card
-          code="nemotron_it_320"
-          title="Nemotron 3.5 · 320 ms · BALANCED"
-          sub="More context than 160 ms · compare accuracy vs latency"
-        />
-        <Card
-          code="nemotron_it_560"
-          title="Nemotron 3.5 · 560 ms · ACCURACY"
-          sub="Official Sherpa-ONNX multilingual export · stronger context"
-        />
-        <Card
-          code="nemotron_it_1120"
-          title="Nemotron 3.5 · 1120 ms · MAX CONTEXT"
-          sub="Maximum context variant · likely slower first text, useful accuracy benchmark"
-        />
+        <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, overflow: "hidden"}}>
+          {RECOMMENDED.map((item, index) => {
+            const selected = current === item.code
+            const downloaded = presetDownloaded[item.code] === true
+            return (
+              <View
+                key={item.code}
+                style={{
+                  padding: 15,
+                  borderTopWidth: index === 0 ? 0 : 1,
+                  borderTopColor: "#241A2D",
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 12,
+                }}>
+                <View style={{width: 26, height: 26, borderRadius: 13, backgroundColor: "#21142D", alignItems: "center", justifyContent: "center"}}>
+                  <RNText style={{color: PURPLE_SOFT, fontSize: 11, fontWeight: "900"}}>{index + 1}</RNText>
+                </View>
+                <View style={{flex: 1}}>
+                  <RNText style={{color: "white", fontSize: 15, fontWeight: "800"}}>{item.title}</RNText>
+                  <RNText style={{color: "#8F819B", fontSize: 12, marginTop: 3}}>{item.sub}</RNText>
+                </View>
+                <ActionButton
+                  label={
+                    busy === item.code
+                      ? progress > 0
+                        ? `${progress}%`
+                        : "…"
+                      : selected
+                        ? "ACTIVE"
+                        : downloaded
+                          ? "USE"
+                          : "GET"
+                  }
+                  onPress={() => void activate(item.code)}
+                  secondary={selected}
+                  disabled={!!busy || selected}
+                />
+              </View>
+            )
+          })}
+        </View>
 
-        <View
-          style={{
-            backgroundColor: "#100d16",
-            borderRadius: 18,
-            padding: 16,
-            marginBottom: 14,
-            borderWidth: 1,
-            borderColor: "#292032",
-          }}>
-          <RNText style={{color: "white", fontSize: 20, fontWeight: "800"}}>
-            MODEL SEARCH V2
-          </RNText>
-          <RNText style={{color: "#a99db8", marginTop: 6, marginBottom: 12}}>
-            Search official Sherpa/GitHub, Hugging Face, whisper.cpp and Vosk sources. Compatible Sherpa packages download + test in-app; other direct packages download into the local model library.
-          </RNText>
+        <RNText style={{color: "#B9A6C8", fontSize: 12, fontWeight: "900", letterSpacing: 1.2, marginTop: 26, marginBottom: 10}}>
+          MY MODEL LIBRARY
+        </RNText>
+        <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, padding: 14}}>
+          {installedModels.length === 0 ? (
+            <RNText style={{color: "#7F708C", fontSize: 13}}>
+              No custom/downloaded models yet. Models you import or download will stay here until you delete them.
+            </RNText>
+          ) : (
+            installedModels.map((entry, index) => (
+              <View
+                key={entry.path}
+                style={{
+                  paddingVertical: 12,
+                  borderTopWidth: index === 0 ? 0 : 1,
+                  borderTopColor: "#241A2D",
+                }}>
+                <View style={{flexDirection: "row", alignItems: "center", gap: 10}}>
+                  <View style={{flex: 1}}>
+                    <RNText style={{color: "white", fontWeight: "800", fontSize: 14}}>{entry.displayName}</RNText>
+                    <RNText style={{color: "#8F819B", fontSize: 11, marginTop: 4}}>
+                      {entry.source} · {entry.runtime} · {entry.runnable ? "Ready" : "Adapter required"}
+                    </RNText>
+                  </View>
+                  {entry.current && (
+                    <View style={{backgroundColor: "#17301F", borderRadius: 999, paddingHorizontal: 9, paddingVertical: 5}}>
+                      <RNText style={{color: "#6FE3A5", fontSize: 10, fontWeight: "900"}}>ACTIVE</RNText>
+                    </View>
+                  )}
+                </View>
+                <View style={{flexDirection: "row", gap: 8, marginTop: 10}}>
+                  {entry.runnable && (
+                    <ActionButton
+                      label={entry.current ? "SELECTED" : busy === `library:${entry.id}` ? "LOADING…" : "USE"}
+                      onPress={() => void useInstalled(entry)}
+                      disabled={!!busy || entry.current}
+                    />
+                  )}
+                  {entry.sourceUrl ? (
+                    <ActionButton label="SOURCE" secondary onPress={() => void Linking.openURL(entry.sourceUrl!)} />
+                  ) : null}
+                  <ActionButton
+                    label={busy === `delete:${entry.id}` ? "DELETING…" : "DELETE"}
+                    danger
+                    onPress={() => deleteInstalled(entry)}
+                    disabled={!!busy}
+                  />
+                </View>
+              </View>
+            ))
+          )}
 
+          <Pressable
+            onPress={() => void importCustom()}
+            disabled={!!busy}
+            style={{
+              marginTop: installedModels.length ? 10 : 14,
+              borderWidth: 1,
+              borderColor: "#68418B",
+              backgroundColor: "#211332",
+              borderRadius: 14,
+              padding: 13,
+            }}>
+            <RNText style={{color: "white", fontWeight: "800"}}>＋ Import Sherpa .tar.bz2</RNText>
+            <RNText style={{color: "#9E8DAE", fontSize: 11, marginTop: 4}}>Installs, validates, selects, and keeps it in your library.</RNText>
+          </Pressable>
+        </View>
+
+        <RNText style={{color: "#B9A6C8", fontSize: 12, fontWeight: "900", letterSpacing: 1.2, marginTop: 26, marginBottom: 10}}>
+          SEARCH MODELS
+        </RNText>
+        <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, padding: 14}}>
+          <RNText style={{color: "#8F819B", fontSize: 12, lineHeight: 17, marginBottom: 10}}>
+            Search official Sherpa releases, Hugging Face, whisper.cpp and Vosk. Compatible Sherpa models install + activate immediately; other runtimes are saved to your library.
+          </RNText>
           <TextInput
             value={browserQuery}
             onChangeText={setBrowserQuery}
-            placeholder="Search: italian, streaming, parakeet, nemotron…"
-            placeholderTextColor="#6f637c"
+            placeholder="italian, streaming, nemotron, whisper…"
+            placeholderTextColor="#6A5C77"
             autoCapitalize="none"
             autoCorrect={false}
             style={{
               color: "white",
-              backgroundColor: "#17121e",
+              backgroundColor: "#17121E",
               borderWidth: 1,
-              borderColor: "#392b49",
-              borderRadius: 14,
-              paddingHorizontal: 14,
-              paddingVertical: 12,
+              borderColor: "#392B49",
+              borderRadius: 13,
+              paddingHorizontal: 13,
+              paddingVertical: 11,
             }}
           />
           <Pressable
             onPress={() => void searchModelBrowser()}
             disabled={browserLoading || !!busy}
-            style={{
-              backgroundColor: "#6d35a8",
-              borderRadius: 14,
-              padding: 13,
-              marginTop: 10,
-              alignItems: "center",
-            }}>
-            <RNText style={{color: "white", fontWeight: "800"}}>
-              {browserLoading ? "SEARCHING SOURCES…" : "SEARCH V2"}
-            </RNText>
+            style={{backgroundColor: "#6D35A8", borderRadius: 13, padding: 12, marginTop: 9, alignItems: "center"}}>
+            <RNText style={{color: "white", fontWeight: "900"}}>{browserLoading ? "SEARCHING…" : "SEARCH"}</RNText>
           </Pressable>
 
-          {!!browserError && (
-            <RNText style={{color: "#ff829b", marginTop: 10, fontSize: 12}}>{browserError}</RNText>
-          )}
+          {!!browserError && <RNText style={{color: "#FF829B", marginTop: 10, fontSize: 12}}>{browserError}</RNText>}
 
-          {browserModels.slice(0, 40).map((model) => {
+          {browserModels.slice(0, 30).map((model) => {
+            const installed = installedModels.find((entry) => entry.id === model.id)
             const direct = !!model.downloadUrl || !!model.directFiles?.length
-            const badge =
-              model.compatibility === "native-likely"
-                ? "🟢 NATIVE CANDIDATE"
-                : model.compatibility === "native-unverified"
-                  ? "🟡 QUARANTINE TEST"
-                  : "⚪ ADAPTER REQUIRED"
-            const actionLabel = !direct
-              ? "OPEN SOURCE"
-              : model.downloadMode === "test"
-                ? "DOWNLOAD & TEST"
-                : "DOWNLOAD"
-
+            const action =
+              installed?.runnable
+                ? installed.current
+                  ? "ACTIVE"
+                  : "USE"
+                : installed
+                  ? "DOWNLOADED"
+                  : direct
+                    ? model.downloadMode === "test"
+                      ? "INSTALL + USE"
+                      : "DOWNLOAD"
+                    : "OPEN SOURCE"
             return (
-              <View
-                key={model.id}
-                style={{
-                  marginTop: 12,
-                  paddingTop: 12,
-                  borderTopWidth: 1,
-                  borderTopColor: "#292032",
-                }}>
-                <RNText style={{color: "white", fontWeight: "800"}}>{model.displayName}</RNText>
-                <RNText style={{color: "#8f7fa3", marginTop: 3, fontSize: 12}}>
-                  {model.source} · {badge} · {model.runtime}
+              <View key={model.id} style={{borderTopWidth: 1, borderTopColor: "#241A2D", paddingTop: 12, marginTop: 12}}>
+                <RNText style={{color: "white", fontSize: 14, fontWeight: "800"}}>{model.displayName}</RNText>
+                <RNText style={{color: "#8F819B", fontSize: 11, marginTop: 4}}>
+                  {model.source} · {model.runtime}
                   {typeof model.size === "number" ? ` · ${STT.formatBytes(model.size)}` : ""}
                 </RNText>
-                <RNText style={{color: "#a99db8", marginTop: 5, fontSize: 12}}>{model.detail}</RNText>
+                <RNText style={{color: "#756981", fontSize: 11, lineHeight: 16, marginTop: 4}}>{model.detail}</RNText>
                 <View style={{flexDirection: "row", gap: 8, marginTop: 9}}>
-                  <Pressable
-                    onPress={() => void testRemoteModel(model)}
-                    disabled={!!busy}
-                    style={{
-                      flex: 1,
-                      backgroundColor: direct ? "#6d35a8" : "#21182b",
-                      borderRadius: 11,
-                      padding: 10,
-                      alignItems: "center",
-                    }}>
-                    <RNText style={{color: "white", fontWeight: "800", fontSize: 12}}>
-                      {busy === `remote:${model.id}`
-                        ? progress > 0
-                          ? `DOWNLOADING ${progress}%`
-                          : "PREPARING…"
-                        : actionLabel}
-                    </RNText>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => void Linking.openURL(model.sourceUrl)}
-                    style={{
-                      backgroundColor: "#21182b",
-                      borderRadius: 11,
-                      padding: 10,
-                      alignItems: "center",
-                    }}>
-                    <RNText style={{color: "#c8a6ff", fontWeight: "800", fontSize: 12}}>SOURCE ↗</RNText>
-                  </Pressable>
+                  <ActionButton
+                    label={busy === `remote:${model.id}` ? (progress > 0 ? `${progress}%` : "WORKING…") : action}
+                    onPress={() => void handleRemoteModel(model)}
+                    disabled={!!busy || installed?.current === true || (installed != null && installed.runnable === false)}
+                    secondary={!direct || installed != null}
+                  />
+                  <ActionButton label="SOURCE" secondary onPress={() => void Linking.openURL(model.sourceUrl)} />
                 </View>
               </View>
             )
           })}
         </View>
 
-        <View
-          style={{
-            backgroundColor: "#100d16",
-            borderRadius: 18,
-            padding: 16,
-            marginBottom: 14,
-            borderWidth: 1,
-            borderColor: "#292032",
-          }}>
-          <RNText style={{color: "white", fontSize: 18, fontWeight: "800", marginBottom: 8}}>
-            DISCOVERY SOURCES
-          </RNText>
-          <RNText style={{color: "#a99db8", marginBottom: 10}}>
-            Broad model ecosystems and comparison feeds. Non-Sherpa families stay discovery-only until a runtime adapter exists.
-          </RNText>
-          {sourceLinks.map((source) => (
+        <RNText style={{color: "#B9A6C8", fontSize: 12, fontWeight: "900", letterSpacing: 1.2, marginTop: 26, marginBottom: 10}}>
+          CURATED SOURCES
+        </RNText>
+        <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, overflow: "hidden"}}>
+          {sourceLinks.map((source, index) => (
             <Pressable
               key={source.url}
               onPress={() => void Linking.openURL(source.url)}
-              style={{
-                paddingVertical: 11,
-                borderTopWidth: 1,
-                borderTopColor: "#292032",
-              }}>
-              <RNText style={{color: "#b989ff", fontWeight: "700"}}>{source.name} ↗</RNText>
-              <RNText style={{color: "#766985", fontSize: 11, marginTop: 3}}>{source.detail}</RNText>
+              style={{padding: 14, borderTopWidth: index === 0 ? 0 : 1, borderTopColor: "#241A2D"}}>
+              <RNText style={{color: PURPLE_SOFT, fontWeight: "800", fontSize: 13}}>{source.name} ↗</RNText>
+              <RNText style={{color: "#756981", fontSize: 11, marginTop: 3}}>{source.detail}</RNText>
             </Pressable>
           ))}
         </View>
 
-        {currentModel.custom && (
-          <View
-            style={{
-              backgroundColor: "#17101F",
-              borderRadius: 16,
-              borderWidth: 1,
-              borderColor: "#49305E",
-              padding: 14,
-              marginBottom: 12,
-            }}>
-            <RNText style={{color: "#B989FF", fontSize: 11, fontWeight: "800"}}>CUSTOM MODEL INSTALLED</RNText>
-            <RNText style={{color: "white", fontSize: 15, fontWeight: "700", marginTop: 5}}>
-              {currentModel.displayName}
-            </RNText>
-          </View>
-        )}
+        {busy && <ActivityIndicator style={{marginTop: 18}} color={PURPLE_SOFT} />}
+        <RNText style={{color: PURPLE_SOFT, marginTop: 14, lineHeight: 19}}>{status}</RNText>
 
-        <Pressable
-          onPress={() => void importCustom()}
-          disabled={!!busy}
-          style={{
-            backgroundColor: "#211332",
-            borderWidth: 1,
-            borderColor: "#9b5cff",
-            borderRadius: 18,
-            padding: 16,
-            marginTop: 4,
-          }}>
-          <RNText style={{color: "white", fontSize: 17, fontWeight: "800"}}>
-            ＋ Import Custom Sherpa Model
-          </RNText>
-          <RNText style={{color: "#bda8d6", marginTop: 5}}>
-            .tar.bz2 · transducer or CTC · extracted + validated in-app
-          </RNText>
-        </Pressable>
-
-        {busy && <ActivityIndicator style={{marginTop: 18}} color="#b989ff" />}
-        <RNText style={{color: "#b989ff", marginTop: 14}}>{status}</RNText>
-
-        <View
-          style={{
-            backgroundColor: "#100d16",
-            borderRadius: 18,
-            padding: 18,
-            marginTop: 22,
-            borderWidth: 1,
-            borderColor: "#292032",
-          }}>
-          <RNText style={{color: "white", fontSize: 18, fontWeight: "800"}}>MODEL RUNTIME</RNText>
-          <RNText style={{color: runtimeState.color, marginTop: 10, fontWeight: "800"}}>
-            {runtimeState.label}
-          </RNText>
-          {!!diagnostics.lastError && (
-            <RNText style={{color: "#ff829b", marginTop: 8, fontSize: 12}}>
-              Last error: {diagnostics.lastError}
-            </RNText>
-          )}
+        <View style={{backgroundColor: CARD, borderRadius: 20, padding: 17, marginTop: 22, borderWidth: 1, borderColor: BORDER}}>
+          <RNText style={{color: "white", fontSize: 18, fontWeight: "900"}}>MODEL RUNTIME</RNText>
+          <RNText style={{color: runtimeState.color, marginTop: 9, fontWeight: "900"}}>{runtimeState.label}</RNText>
+          {!!diagnostics.lastError && <RNText style={{color: "#FF829B", marginTop: 8, fontSize: 12}}>Last error: {diagnostics.lastError}</RNText>}
         </View>
 
-        <View
-          style={{
-            backgroundColor: "#100d16",
-            borderRadius: 18,
-            padding: 18,
-            marginTop: 18,
-            borderWidth: 1,
-            borderColor: "#292032",
-          }}>
+        <View style={{backgroundColor: CARD, borderRadius: 20, padding: 17, marginTop: 16, borderWidth: 1, borderColor: BORDER}}>
           <View style={{flexDirection: "row", justifyContent: "space-between", alignItems: "center"}}>
-            <RNText style={{color: "white", fontSize: 20, fontWeight: "800"}}>PIPELINE HEALTH</RNText>
-            <Pressable onPress={() => void resetBenchmark()}>
-              <RNText style={{color: "#b989ff", fontWeight: "700"}}>RESET</RNText>
-            </Pressable>
+            <RNText style={{color: "white", fontSize: 19, fontWeight: "900"}}>PIPELINE HEALTH</RNText>
+            <Pressable onPress={() => void resetBenchmark()}><RNText style={{color: PURPLE_SOFT, fontWeight: "800"}}>RESET</RNText></Pressable>
           </View>
-
           {pipeline.map(([name, age]) => {
             const state = health(age)
             return (
               <View key={name} style={{flexDirection: "row", justifyContent: "space-between", paddingVertical: 7}}>
-                <RNText style={{color: "#a99db8"}}>{name}</RNText>
-                <RNText style={{color: state.color, fontWeight: "800"}}>{state.label}</RNText>
+                <RNText style={{color: "#A99DB8"}}>{name}</RNText>
+                <RNText style={{color: state.color, fontWeight: "900"}}>{state.label}</RNText>
               </View>
             )
           })}
-          <RNText style={{color: "#6f637c", fontSize: 12, marginTop: 10}}>
-            Open Captions, speak for a few seconds, then return here. These stages persist for the whole app process.
-          </RNText>
         </View>
 
-        <View
-          style={{
-            backgroundColor: "#100d16",
-            borderRadius: 18,
-            padding: 18,
-            marginTop: 18,
-            borderWidth: 1,
-            borderColor: "#292032",
-          }}>
-          <RNText style={{color: "white", fontSize: 20, fontWeight: "800", marginBottom: 14}}>
-            LIVE BENCHMARK
-          </RNText>
+        <View style={{backgroundColor: CARD, borderRadius: 20, padding: 17, marginTop: 16, borderWidth: 1, borderColor: BORDER}}>
+          <RNText style={{color: "white", fontSize: 19, fontWeight: "900", marginBottom: 12}}>LIVE BENCHMARK</RNText>
           {[
             ["Speech → first partial", metrics.speechToFirstPartial + " ms"],
             ["Speech → G2 display", metrics.speechToDisplay + " ms"],
@@ -693,14 +702,11 @@ export default function G2ModelLab() {
             ["Audio backlog", metrics.backlog + " ms"],
             ["STT → display", metrics.sttToG2 + " ms"],
           ].map(([key, value]) => (
-            <View key={key} style={{flexDirection: "row", justifyContent: "space-between", paddingVertical: 7}}>
-              <RNText style={{color: "#a99db8"}}>{key}</RNText>
-              <RNText style={{color: "white", fontWeight: "700"}}>{value}</RNText>
+            <View key={key} style={{flexDirection: "row", justifyContent: "space-between", paddingVertical: 7, gap: 12}}>
+              <RNText style={{color: "#A99DB8", flex: 1}}>{key}</RNText>
+              <RNText style={{color: "white", fontWeight: "800"}}>{value}</RNText>
             </View>
           ))}
-          <RNText style={{color: "#6f637c", fontSize: 12, marginTop: 10}}>
-            No placeholders: values come from the persistent native G2/Sherpa pipeline.
-          </RNText>
         </View>
       </ScrollView>
     </Screen>
