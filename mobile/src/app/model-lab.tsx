@@ -510,7 +510,9 @@ export default function G2ModelLab() {
         </RNText>
 
         <View style={{backgroundColor: "#160C20", borderColor: "#6D35A8", borderWidth: 1, borderRadius: 20, padding: 16}}>
-          <RNText style={{color: "#8F7FA3", fontSize: 10, fontWeight: "900", letterSpacing: 1.2}}>ACTIVE MODEL</RNText>
+          <RNText style={{color: "#8F7FA3", fontSize: 10, fontWeight: "900", letterSpacing: 1.2}}>
+            {pendingNextLaunch ? "SELECTED FOR NEXT LAUNCH" : "ACTIVE MODEL"}
+          </RNText>
           <RNText style={{color: "white", fontSize: 19, fontWeight: "900", marginTop: 6}}>{currentModel.displayName}</RNText>
           <RNText style={{color: PURPLE_SOFT, fontSize: 12, marginTop: 5}}>
             {currentModel.source || (currentModel.custom ? "Downloaded / custom" : "G2 Glasses preset")}
