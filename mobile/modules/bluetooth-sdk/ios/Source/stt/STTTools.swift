@@ -186,11 +186,24 @@ class STTTools {
         defaults.synchronize()
     }
 
-    /// A real decoder call returned successfully. The candidate has now passed
-    /// the failure mode that structural validation and startup smoke tests miss.
-    static func markCandidateLiveDecodeSucceeded() {
+    /// A real decoder call returned without crashing. Move back to "loaded" so
+    /// a normal app exit between decoder passes is not misclassified as a crash.
+    /// The guard is cleared only after the model produces a real transcription
+    /// result, which proves substantially more than construction/smoke testing.
+    static func markCandidateLiveDecodeReturned() {
         let defaults = UserDefaults.standard
         guard defaults.string(forKey: activationStateKey) == ActivationState.testing.rawValue else {
+            return
+        }
+        defaults.set(ActivationState.loaded.rawValue, forKey: activationStateKey)
+        defaults.synchronize()
+    }
+
+    /// The candidate survived native construction and at least one real decoder
+    /// pass and produced actual text. It can now become the rollback target.
+    static func markCandidateLiveResultSucceeded() {
+        let defaults = UserDefaults.standard
+        guard defaults.string(forKey: activationStateKey) == ActivationState.loaded.rawValue else {
             return
         }
         markCurrentModelReady()
