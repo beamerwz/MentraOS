@@ -105,6 +105,12 @@ export default function G2LabsHome() {
           ? "Bluetooth"
           : "Automatic"
 
+  const batteryEmoji = (value: number | null) => {
+    if (value == null) return "🔋"
+    if (value <= 20) return "🪫"
+    return "🔋"
+  }
+
   useFocusEffect(
     useCallback(() => {
       BgTimer.setTimeout(() => refreshApps(), 250)
@@ -150,7 +156,7 @@ export default function G2LabsHome() {
     }
   }
 
-  const version = Application.nativeApplicationVersion || "3.1.3"
+  const version = Application.nativeApplicationVersion || "3.1.4"
 
   return (
     <Screen
@@ -282,12 +288,12 @@ export default function G2LabsHome() {
               },
               {
                 label: "GLASSES",
-                value: battery === null ? "—" : `${battery}%`,
+                value: battery === null ? "—" : `${batteryEmoji(battery)} ${battery}%`,
                 icon: <Activity size={14} color={PURPLE_SOFT} />,
               },
               {
                 label: "CASE",
-                value: caseBattery === null ? "—" : `${caseBattery}%`,
+                value: caseBattery === null ? "—" : `${batteryEmoji(caseBattery)} ${caseBattery}%`,
                 icon: <Activity size={14} color={PURPLE_SOFT} />,
               },
             ].map((item) => (
