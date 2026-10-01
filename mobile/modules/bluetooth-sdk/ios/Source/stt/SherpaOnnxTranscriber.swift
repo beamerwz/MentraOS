@@ -345,7 +345,8 @@ final class G2LabDiagnostics {
  * It works fully offline and processes PCM audio in real-time to provide partial and final ASR results.
  * This class runs on a background thread, processes short PCM chunks, and emits transcribed text using a delegate.
  */
-final class SherpaOnnxTranscriber: @unchecked Sendable {
+final class SherpaOnnxTranscriber: LocalSTTTranscriber, @unchecked Sendable {
+    let runtimeId = "sherpa-onnx"
     private static let TAG = "SherpaOnnxTranscriber"
 
     private static let SAMPLE_RATE = 16000 // Sherpa-ONNX model's required sample rate
