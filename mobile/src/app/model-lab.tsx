@@ -716,6 +716,56 @@ export default function G2ModelLab() {
         {busy && <ActivityIndicator style={{marginTop: 18}} color={PURPLE_SOFT} />}
         <RNText style={{color: PURPLE_SOFT, marginTop: 14, lineHeight: 19}}>{status}</RNText>
 
+        <RNText style={{color: "#B9A6C8", fontSize: 12, fontWeight: "900", letterSpacing: 1.2, marginTop: 26, marginBottom: 10}}>
+          VOICE RUNTIMES
+        </RNText>
+        <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, padding: 14}}>
+          {[
+            {
+              name: "Sherpa-ONNX",
+              status: "INSTALLED",
+              detail: "Native G2 LABS streaming runtime. Recommended and currently supported.",
+              source: "https://github.com/k2-fsa/sherpa-onnx",
+            },
+            {
+              name: "whisper.cpp",
+              status: "NOT INSTALLED",
+              detail: "Models can be stored in your library now. Native iOS runtime adapter is the next integration step.",
+              source: "https://github.com/ggml-org/whisper.cpp",
+            },
+            {
+              name: "Vosk",
+              status: "NOT INSTALLED",
+              detail: "Models are never shown as installed unless the runtime adapter is actually present.",
+              source: "https://alphacephei.com/vosk/",
+            },
+          ].map((runtime, index) => (
+            <View
+              key={runtime.name}
+              style={{paddingVertical: 11, borderTopWidth: index === 0 ? 0 : 1, borderTopColor: "#241A2D"}}>
+              <View style={{flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10}}>
+                <RNText style={{color: "white", fontSize: 14, fontWeight: "900"}}>{runtime.name}</RNText>
+                <RNText
+                  style={{
+                    color: runtime.status === "INSTALLED" ? "#6FE3A5" : "#8F819B",
+                    fontSize: 10,
+                    fontWeight: "900",
+                  }}>
+                  {runtime.status}
+                </RNText>
+              </View>
+              <RNText style={{color: "#756981", fontSize: 11, lineHeight: 16, marginTop: 4}}>{runtime.detail}</RNText>
+              <View style={{marginTop: 8, alignSelf: "flex-start"}}>
+                <ActionButton label="RUNTIME SOURCE" secondary onPress={() => void Linking.openURL(runtime.source)} />
+              </View>
+            </View>
+          ))}
+          <RNText style={{color: "#6F6279", fontSize: 10, lineHeight: 15, marginTop: 8}}>
+            iOS cannot safely install executable speech engines after the IPA is signed. G2 LABS can download models/data here,
+            but new native runtimes must be integrated into a new IPA build.
+          </RNText>
+        </View>
+
         <View style={{backgroundColor: CARD, borderRadius: 20, padding: 17, marginTop: 22, borderWidth: 1, borderColor: BORDER}}>
           <RNText style={{color: "white", fontSize: 18, fontWeight: "900"}}>MODEL RUNTIME</RNText>
           <RNText style={{color: runtimeState.color, marginTop: 9, fontWeight: "900"}}>{runtimeState.label}</RNText>
