@@ -1489,6 +1489,8 @@ export type BluetoothSettingsUpdate = Partial<{
   should_send_transcript: boolean
   offline_mode: boolean
   local_stt_fallback_active: boolean
+  /** G2 LABS host-only runtime bit used to turn double-tap into Captions stop/close. */
+  g2_captions_active: boolean
   pending_wearable: DeviceModel | ""
   default_wearable: DeviceModel | ""
   device_name: string
