@@ -247,7 +247,7 @@ export default function G2IntegratedCaptions() {
             <View style={{flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14}}>
               <View>
                 <RNText style={{color: "white", fontSize: 22, fontWeight: "900"}}>Speech model</RNText>
-                <RNText style={{color: "#8F819B", fontSize: 12, marginTop: 3}}>Switch without leaving Captions</RNText>
+                <RNText style={{color: "#8F819B", fontSize: 12, marginTop: 3}}>Switch here or from Captions Settings</RNText>
               </View>
               <Pressable onPress={() => setModelPickerOpen(false)} style={{padding: 8}}>
                 <RNText style={{color: "#C4B5FD", fontSize: 18}}>✕</RNText>
