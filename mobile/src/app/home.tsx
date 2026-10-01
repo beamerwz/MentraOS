@@ -36,7 +36,6 @@ type QuickCardProps = {
   icon: ReactNode
   onPress: () => void
   accent?: boolean
-  wide?: boolean
 }
 
 function BatteryGlyph({value}: {value: number | null}) {
@@ -76,13 +75,14 @@ function BatteryGlyph({value}: {value: number | null}) {
   )
 }
 
-function QuickCard({title, subtitle, icon, onPress, accent = false, wide = false}: QuickCardProps) {
+function QuickCard({title, subtitle, icon, onPress, accent = false}: QuickCardProps) {
   return (
     <Pressable
       onPress={onPress}
       style={({pressed}) => ({
-        width: wide ? "100%" : "48.5%",
-        minHeight: wide ? 116 : 150,
+        flex: 1,
+        minWidth: 0,
+        minHeight: 150,
         borderRadius: 24,
         borderWidth: 1,
         borderColor: accent ? "#7C3AED" : CARD_BORDER,
@@ -107,7 +107,12 @@ function QuickCard({title, subtitle, icon, onPress, accent = false, wide = false
           <RNText style={{color: "white", fontSize: 18, fontWeight: "800", flex: 1}}>{title}</RNText>
           <ChevronRight size={18} color="#756581" />
         </View>
-        <RNText style={{color: "#978AA4", fontSize: 13, lineHeight: 18, marginTop: 5}}>{subtitle}</RNText>
+        <RNText
+          numberOfLines={2}
+          ellipsizeMode="tail"
+          style={{color: "#978AA4", fontSize: 13, lineHeight: 18, marginTop: 5}}>
+          {subtitle}
+        </RNText>
       </View>
     </Pressable>
   )
@@ -362,32 +367,36 @@ export default function G2LabsHome() {
           <RNText style={{color: "#B9A6C8", fontSize: 12, fontWeight: "900", letterSpacing: 1.3}}>G2 LABS</RNText>
         </View>
 
-        <View style={{flexDirection: "row", flexWrap: "wrap", gap: 12}}>
-          <QuickCard
-            title="Captions"
-            subtitle="Live G2 transcription"
-            accent
-            icon={launchingCaptions ? <ActivityIndicator color={PURPLE_SOFT} /> : <Captions size={24} color="#D8B4FE" />}
-            onPress={() => void launchCaptions()}
-          />
-          <QuickCard
-            title="Model Lab"
-            subtitle={`Selected: ${currentModelName}`}
-            icon={<FlaskConical size={24} color="#C084FC" />}
-            onPress={() => router.push("/model-lab")}
-          />
-          <QuickCard
-            title="Microphone"
-            subtitle={`Selected: ${micLabel}`}
-            icon={<Mic2 size={24} color="#C084FC" />}
-            onPress={() => router.push("/miniapps/settings/microphone")}
-          />
-          <QuickCard
-            title="Settings"
-            subtitle="Connection & device controls"
-            icon={<Settings size={24} color="#C084FC" />}
-            onPress={() => router.push("/miniapps/settings/main")}
-          />
+        <View style={{gap: 12}}>
+          <View style={{flexDirection: "row", gap: 12}}>
+            <QuickCard
+              title="Captions"
+              subtitle="Live G2 transcription"
+              accent
+              icon={launchingCaptions ? <ActivityIndicator color={PURPLE_SOFT} /> : <Captions size={24} color="#D8B4FE" />}
+              onPress={() => void launchCaptions()}
+            />
+            <QuickCard
+              title="Model Lab"
+              subtitle={`Selected: ${currentModelName}`}
+              icon={<FlaskConical size={24} color="#C084FC" />}
+              onPress={() => router.push("/model-lab")}
+            />
+          </View>
+          <View style={{flexDirection: "row", gap: 12}}>
+            <QuickCard
+              title="Microphone"
+              subtitle={`Selected: ${micLabel}`}
+              icon={<Mic2 size={24} color="#C084FC" />}
+              onPress={() => router.push("/miniapps/settings/microphone")}
+            />
+            <QuickCard
+              title="Settings"
+              subtitle="Connection & device controls"
+              icon={<Settings size={24} color="#C084FC" />}
+              onPress={() => router.push("/miniapps/settings/main")}
+            />
+          </View>
         </View>
 
         {!!launchMessage && (
@@ -408,6 +417,7 @@ export default function G2LabsHome() {
           onPress={() => router.push("/model-lab")}
           style={({pressed}) => ({
             marginTop: 20,
+            width: "100%",
             borderRadius: 24,
             borderWidth: 1,
             borderColor: "#32223F",
