@@ -5,8 +5,8 @@
  * Interaction: swipe up/down to move, single tap to activate.
  *
  * The menu deliberately pauses Captions while it owns the glasses display.
- * Choosing Offline / Cloud / a downloaded model restarts Captions headlessly,
- * so the phone UI never has to be opened.
+ * Choosing Offline / Cloud starts Captions headlessly. Downloaded-model changes
+ * are staged safely for the next clean app launch so ORT is never hot-swapped.
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
@@ -117,17 +117,24 @@ class G2SpeechQuickMenu {
       }
 
       const model = this.models[this.cursor]
-      this.statusLine = "Loading model..."
+      this.statusLine = "Staging model safely..."
       await this.render()
       try {
-        if (model.code) {
-          await sttModelManager.activateLanguage(model.code)
-        } else if (model.installed) {
-          await sttModelManager.activateInstalledModel(model.installed.path)
-        } else {
-          throw new Error("Model target is unavailable")
-        }
+        const activation = model.code
+          ? await sttModelManager.activateLanguage(model.code)
+          : model.installed
+            ? await sttModelManager.activateInstalledModel(model.installed.path)
+            : (() => {
+                throw new Error("Model target is unavailable")
+              })()
+
         await this.persistMode("local")
+        if (activation === "staged-relaunch") {
+          this.statusLine = "STAGED · reopen G2 app once"
+          await this.refreshState()
+          await this.render()
+          return
+        }
         await this.startCaptionsAndClose()
       } catch (error) {
         this.statusLine = error instanceof Error ? error.message : String(error)
