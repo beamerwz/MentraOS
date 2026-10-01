@@ -1341,10 +1341,20 @@ class STTModelManager {
 
   async deleteModel(code?: string): Promise<void> {
     const id = code || this.currentLanguage
-    const modelPath = this.getModelPath(id)
-    if (await RNFS.exists(modelPath)) {
-      await RNFS.unlink(modelPath)
+    if (id === "it") {
+      throw new Error("Italian Built-in is the G2 LABS recovery model and cannot be deleted.")
     }
+    if (!this.languages[id]) throw new Error(`Unknown preset model: ${id}`)
+
+    const modelPath = this.getModelPath(id)
+    const currentPath = await BluetoothSdk.getSttModelPath()
+    if (currentPath === modelPath) {
+      if (!(await this.isModelAvailable("it"))) await this.downloadModel("it")
+      await this.activateLanguage("it")
+    }
+
+    if (await RNFS.exists(modelPath)) await RNFS.unlink(modelPath)
+    if (this.currentLanguage === id) this.currentLanguage = "it"
   }
 
   async activateLanguage(code: string): Promise<void> {
