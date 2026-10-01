@@ -54,7 +54,7 @@ export default function ThreadPerformanceLab() {
     }
   })
   const [samples, setSamples] = useState<Record<string, SavedSample>>({})
-  const [message, setMessage] = useState("3 threads is the current GOLD baseline.")
+  const [message, setMessage] = useState("2 threads is the low-latency default. 3 threads remains the previous GOLD baseline.")
   const [autoRunning, setAutoRunning] = useState(false)
   const [autoIndex, setAutoIndex] = useState(0)
 
@@ -126,7 +126,7 @@ export default function ThreadPerformanceLab() {
     const nextIndex = autoIndex + 1
     if (nextIndex >= autoThreads.length) {
       setAutoRunning(false)
-      setMessage("AUTO A/B complete · results for 1 / 2 / 3 / 4 threads are saved below. Restore 3 threads unless another result is clearly better.")
+      setMessage("AUTO A/B complete · results for 1 / 2 / 3 / 4 threads are saved below. Restore 2 threads for lowest latency, or 3 if your repeated A/B results are steadier.")
       return
     }
     setAutoIndex(nextIndex)
@@ -194,7 +194,7 @@ export default function ThreadPerformanceLab() {
                 }}>
                 <RNText style={{color: "white", fontSize: 18, fontWeight: "900"}}>{threads}</RNText>
                 <RNText style={{color: selected ? SOFT : "#756981", fontSize: 9, fontWeight: "800", marginTop: 3}}>
-                  {threads === 3 ? "GOLD" : threads === 4 ? "ULTRA" : threads === 2 ? "BALANCED" : "BATTERY"}
+                  {threads === 3 ? "GOLD" : threads === 4 ? "THROUGHPUT" : threads === 2 ? "LATENCY" : "BATTERY"}
                 </RNText>
               </Pressable>
             )
