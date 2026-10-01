@@ -2,6 +2,7 @@ import {useFocusEffect} from "@react-navigation/native"
 import {router} from "expo-router"
 import {LinearGradient} from "expo-linear-gradient"
 import * as Application from "expo-application"
+import * as RNFS from "@dr.pogodin/react-native-fs"
 import {useCallback, useEffect, useRef, useState, type ReactNode} from "react"
 import {ActivityIndicator, Pressable, ScrollView, Text as RNText, View} from "react-native"
 import {
@@ -29,6 +30,7 @@ const PURPLE_SOFT = "#C4B5FD"
 const CARD = "#120D19"
 const CARD_BORDER = "#2D2039"
 const CAPTIONS_PACKAGE = "com.mentra.captions"
+const CASE_BATTERY_CACHE = `${RNFS.DocumentDirectoryPath}/g2glasses-case-battery.txt`
 
 type QuickCardProps = {
   title: string
@@ -159,7 +161,18 @@ export default function G2LabsHome() {
   )
 
   useEffect(() => {
-    if (caseBattery != null) setLastKnownCaseBattery(caseBattery)
+    void RNFS.readFile(CASE_BATTERY_CACHE, "utf8")
+      .then((value) => {
+        const parsed = Number(value)
+        if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100) setLastKnownCaseBattery(parsed)
+      })
+      .catch(() => undefined)
+  }, [])
+
+  useEffect(() => {
+    if (caseBattery == null) return
+    setLastKnownCaseBattery(caseBattery)
+    void RNFS.writeFile(CASE_BATTERY_CACHE, String(caseBattery), "utf8").catch(() => undefined)
   }, [caseBattery])
 
   useEffect(() => {
