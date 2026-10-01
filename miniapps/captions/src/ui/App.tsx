@@ -19,10 +19,12 @@ import {useTranscripts} from "./hooks/useTranscripts"
  * @mentra/react useMentraAuth/frontendToken plumbing is gone — there is no
  * cross-origin backend to authenticate against in the local runtime.
  */
+const G2_LABS = process.env.MENTRA_PUBLIC_G2_LABS === "1"
+
 export function App() {
   const [activeTab, setActiveTab] = useState<"captions" | "settings">("captions")
   const [showLanguageSelector, setShowLanguageSelector] = useState(false)
-  const isDark = useColorScheme() === "dark"
+  const isDark = G2_LABS ? true : useColorScheme() === "dark"
   const {insets} = useSafeArea()
   const {developerMode, holdHandlers} = useDeveloperMode()
   const {
@@ -60,27 +62,35 @@ export function App() {
   // developer mode alongside the CloudStatusFooter below. Everyone else gets
   // the stable brand accent so the app bar/background don't flicker color with
   // cloud connectivity.
-  const presentation = developerMode
-    ? getCloudPresentation(cloudStatus, isDark)
-    : {
-        label: "",
-        detail: "",
-        accentColor: isDark ? "#365F5A" : "#6DAEA6",
+  const presentation = G2_LABS
+    ? {
+        label: "G2 Glasses",
+        detail: "On-device captions",
+        accentColor: "#6D35A8",
         accentForeground: "#FFFFFF",
-        dark: isDark,
+        dark: true,
       }
+    : developerMode
+      ? getCloudPresentation(cloudStatus, isDark)
+      : {
+          label: "",
+          detail: "",
+          accentColor: isDark ? "#365F5A" : "#6DAEA6",
+          accentForeground: "#FFFFFF",
+          dark: isDark,
+        }
 
   return (
     <div
-      className="w-screen h-screen flex overflow-hidden font-sans"
+      className={`w-screen h-screen flex overflow-hidden font-sans ${G2_LABS ? "dark g2labs-captions" : ""}`}
       style={{
-        backgroundColor: presentation.accentColor,
+        backgroundColor: G2_LABS ? "#050208" : presentation.accentColor,
         paddingTop: insets.top,
         paddingBottom: insets.bottom,
         paddingLeft: insets.left,
         paddingRight: insets.right,
       }}>
-      <div className="min-h-0 flex-1 bg-zinc-100 dark:bg-zinc-950 flex flex-col overflow-hidden">
+      <div className={`min-h-0 flex-1 flex flex-col overflow-hidden ${G2_LABS ? "bg-[#050208]" : "bg-zinc-100 dark:bg-zinc-950"}`}>
         <Header
           connected={connected}
           accentColor={presentation.accentColor}
