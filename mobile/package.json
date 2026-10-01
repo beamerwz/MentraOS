@@ -180,7 +180,8 @@
     "typesafe-ts": "^1.7.1",
     "uniwind": "^1.5.0",
     "zustand": "^5.0.11",
-    "zx": "^8.8.5"
+    "zx": "^8.8.5",
+    "react-native-executorch": "0.7.2"
   },
   "devDependencies": {
     "@testing-library/react-native": "^13.3.3",
