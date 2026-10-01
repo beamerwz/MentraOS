@@ -8,6 +8,25 @@ import {
 import type {CaptionSettings} from "../hooks/useSettings"
 import {DisplayPreview} from "../hooks/useTranscripts"
 
+const G2_LABS = process.env.MENTRA_PUBLIC_G2_LABS === "1"
+
+type G2ModelChoice = {
+  key: string
+  name: string
+  active: boolean
+}
+
+type G2ModelState = {
+  type: "g2_model_state"
+  currentName: string
+  models: G2ModelChoice[]
+}
+
+function postG2HostMessage(message: Record<string, unknown>) {
+  const hostWindow = window as Window & {ReactNativeWebView?: {postMessage: (payload: string) => void}}
+  hostWindow.ReactNativeWebView?.postMessage(JSON.stringify(message))
+}
+
 interface SettingsProps {
   settings: CaptionSettings | null
   canPosition: boolean
@@ -43,6 +62,23 @@ export function Settings({
   const [captionTimeoutSeconds, setCaptionTimeoutSeconds] = useState(
     settings?.captionTimeoutSeconds ?? DEFAULT_CAPTION_TIMEOUT_SECONDS,
   )
+  const [g2Models, setG2Models] = useState<G2ModelChoice[]>([])
+  const [g2CurrentModel, setG2CurrentModel] = useState("Loading model…")
+
+  useEffect(() => {
+    if (!G2_LABS) return
+
+    const onModelState = (event: Event) => {
+      const detail = (event as CustomEvent<G2ModelState>).detail
+      if (!detail || detail.type !== "g2_model_state") return
+      setG2CurrentModel(detail.currentName)
+      setG2Models(Array.isArray(detail.models) ? detail.models : [])
+    }
+
+    window.addEventListener("g2-model-state", onModelState)
+    postG2HostMessage({type: "g2_model_request"})
+    return () => window.removeEventListener("g2-model-state", onModelState)
+  }, [])
 
   // Sync local state with props when settings change (e.g., from SSE update or initial load)
   useEffect(() => {
@@ -177,6 +213,48 @@ export function Settings({
             </button>
           </div>
         </div>
+
+        {G2_LABS && (
+          <div className="bg-[#100b16] rounded-2xl p-4 border border-[#2d2039]">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-white font-['Red_Hat_Display']">Speech model</p>
+                <p className="mt-1 text-xs text-[#9b8cae] font-['Red_Hat_Display'] truncate">
+                  Active: {g2CurrentModel}
+                </p>
+              </div>
+              <button
+                onClick={() => postG2HostMessage({type: "g2_model_request"})}
+                className="shrink-0 px-3 py-2 rounded-xl border border-[#392b49] bg-[#17101f] text-[#c4b5fd] text-xs font-semibold">
+                Refresh
+              </button>
+            </div>
+
+            {g2Models.length === 0 ? (
+              <p className="text-xs text-[#756981]">Downloaded models will appear here automatically.</p>
+            ) : (
+              <div className="space-y-2">
+                {g2Models.map((model) => (
+                  <div
+                    key={model.key}
+                    className="flex items-center gap-3 rounded-xl border border-[#241a2d] bg-[#0b0710] px-3 py-3">
+                    <p className="min-w-0 flex-1 text-sm font-medium text-white truncate">{model.name}</p>
+                    <button
+                      disabled={model.active}
+                      onClick={() => postG2HostMessage({type: "g2_model_switch", key: model.key})}
+                      className={
+                        model.active
+                          ? "shrink-0 rounded-lg bg-[#17301f] px-3 py-2 text-[11px] font-bold text-[#6fe3a5]"
+                          : "shrink-0 rounded-lg bg-[#6d35a8] px-3 py-2 text-[11px] font-bold text-white"
+                      }>
+                      {model.active ? "ACTIVE" : "SWITCH"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Glasses Display Settings */}
