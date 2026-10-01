@@ -7,12 +7,19 @@ jest.mock("expo-web-browser", () => ({openAuthSessionAsync: jest.fn(), openBrows
 
 const callbackUrl = "com.mentra://auth/callback?code=handoff&state=state"
 
+const originalG2Labs = process.env.EXPO_PUBLIC_G2_LABS
+
 beforeEach(() => {
   jest.clearAllMocks()
   jest.replaceProperty(Platform, "OS", "android")
+  delete process.env.EXPO_PUBLIC_G2_LABS
 })
 
-afterEach(() => jest.restoreAllMocks())
+afterEach(() => {
+  if (originalG2Labs === undefined) delete process.env.EXPO_PUBLIC_G2_LABS
+  else process.env.EXPO_PUBLIC_G2_LABS = originalG2Labs
+  jest.restoreAllMocks()
+})
 
 it("awaits callback processing from the native auth-session result", async () => {
   jest.mocked(WebBrowser.openAuthSessionAsync).mockResolvedValue({type: "success", url: callbackUrl})
@@ -79,4 +86,20 @@ it("on iOS waits for Safari to close before settling", async () => {
   close({type: "cancel"} as WebBrowser.WebBrowserResult)
   await result
   expect(finished).toHaveBeenCalledWith(false)
+})
+
+
+it("on G2 LABS iOS captures the com.mentra callback instead of handing it to Safari", async () => {
+  jest.replaceProperty(Platform, "OS", "ios")
+  process.env.EXPO_PUBLIC_G2_LABS = "1"
+  jest.mocked(WebBrowser.openAuthSessionAsync).mockResolvedValue({type: "success", url: callbackUrl})
+  const processUrl = jest.fn().mockResolvedValue(undefined)
+
+  expect(await openAuthBrowser("https://core.example/oauth/google/start", processUrl)).toBe(true)
+  expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledWith(
+    "https://core.example/oauth/google/start",
+    "com.mentra://auth/callback",
+  )
+  expect(WebBrowser.openBrowserAsync).not.toHaveBeenCalled()
+  expect(processUrl).toHaveBeenCalledWith(callbackUrl)
 })
