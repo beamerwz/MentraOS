@@ -21,7 +21,7 @@ import {Screen} from "@/components/ignite"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
-import {BgTimer, engine, SETTINGS, useRefresh, useSetForeground, useSetting, useStart} from "@mentra/engine"
+import {BgTimer, engine, SETTINGS, useRefresh, useSetting, useStart} from "@mentra/engine"
 import {sttModelManager as STT} from "@mentra/engine-host-internal"
 
 const PURPLE = "#A855F7"
@@ -80,7 +80,6 @@ export default function G2LabsHome() {
   const refreshApps = useRefresh()
   const apps = useForegroundApps()
   const startApplet = useStart()
-  const setForeground = useSetForeground()
   const [launchingCaptions, setLaunchingCaptions] = useState(false)
   const [launchMessage, setLaunchMessage] = useState("")
   const [currentModelName, setCurrentModelName] = useState("Loading model…")
@@ -147,7 +146,7 @@ export default function G2LabsHome() {
         return
       }
 
-      await setForeground(CAPTIONS_PACKAGE)
+      router.push("/captions")
     } catch (error) {
       console.error("G2LABS_HOME captions launch failed", error)
       setLaunchMessage("Could not open Captions.")
