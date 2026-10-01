@@ -27,7 +27,7 @@ export default function G2IntegratedCaptions() {
       try {
         await engine.miniapps.refresh()
         await refreshApps()
-        const app = engine.miniapps.getSnapshot().apps.find((candidate) => candidate.packageName === CAPTIONS_PACKAGE)
+        const app = engine.miniapps.list().find((candidate) => candidate.packageName === CAPTIONS_PACKAGE)
         if (!app) {
           if (alive) setError("Captions is still preparing. Go back and try again.")
           return
