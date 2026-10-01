@@ -59,6 +59,19 @@ export interface CurrentModelSummary {
   source?: string
 }
 
+export interface InstalledModelEntry {
+  id: string
+  displayName: string
+  path: string
+  source: string
+  sourceUrl?: string
+  runtime: ModelRuntime
+  languageCode: string
+  runnable: boolean
+  current: boolean
+  installedAt?: string
+}
+
 export interface ModelSourceLink {
   name: string
   url: string
@@ -91,84 +104,39 @@ class STTModelManager {
 
   private readonly modelSourceLinks: ModelSourceLink[] = [
     {
-      name: "Sherpa-ONNX pretrained model catalog",
+      name: "Sherpa-ONNX · Recommended",
       url: "https://k2-fsa.github.io/sherpa/onnx/pretrained_models/index.html",
-      detail: "Best first source for models that may fit the current native runtime.",
+      detail: "Primary source for models most likely to run directly in G2 Glasses.",
     },
     {
-      name: "Sherpa-ONNX ASR GitHub releases",
+      name: "Sherpa-ONNX · Direct releases",
       url: "https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models",
-      detail: "Direct .tar.bz2 packages; G2 LABS can browse this release feed in-app.",
+      detail: "Official downloadable .tar.bz2 ASR packages.",
     },
     {
-      name: "k2-fsa Sherpa models on Hugging Face",
-      url: "https://huggingface.co/k2-fsa/sherpa-onnx-models/tree/main/asr-models",
-      detail: "Large upstream archive of exported ONNX speech models.",
-    },
-    {
-      name: "Hugging Face Open ASR Leaderboard",
-      url: "https://huggingface.co/spaces/hf-audio/open_asr_leaderboard",
-      detail: "Accuracy / WER / speed comparisons for open ASR models.",
-    },
-    {
-      name: "Hugging Face ASR model browser",
+      name: "Hugging Face · ASR models",
       url: "https://huggingface.co/models?pipeline_tag=automatic-speech-recognition&sort=trending",
-      detail: "Broad discovery feed; many entries need a runtime adapter before G2 LABS can execute them.",
+      detail: "Largest discovery source; Search V2 inspects downloadable files automatically.",
     },
     {
-      name: "NVIDIA speech models on Hugging Face",
-      url: "https://huggingface.co/models?search=nvidia%20parakeet%20canary%20nemotron%20asr",
-      detail: "Parakeet, Canary and Nemotron families.",
+      name: "Hugging Face · Open ASR Leaderboard",
+      url: "https://huggingface.co/spaces/hf-audio/open_asr_leaderboard",
+      detail: "Useful accuracy / WER / speed comparison reference.",
     },
     {
-      name: "Qwen ASR models on Hugging Face",
-      url: "https://huggingface.co/models?search=Qwen3-ASR",
-      detail: "Qwen3-ASR family; Sherpa also publishes ONNX support for Qwen3-ASR.",
-    },
-    {
-      name: "whisper.cpp model catalog",
+      name: "whisper.cpp · On-device models",
       url: "https://github.com/ggml-org/whisper.cpp/tree/master/models",
-      detail: "iPhone-capable GGML/GGUF Whisper ecosystem; requires a whisper.cpp adapter.",
+      detail: "Direct-download Whisper models for the future native runtime adapter.",
     },
     {
-      name: "FunASR model zoo",
-      url: "https://github.com/modelscope/FunASR/blob/main/model_zoo/modelscope_models.md",
-      detail: "Streaming and offline ASR families including Paraformer / multilingual models.",
-    },
-    {
-      name: "ModelScope speech-recognition models",
-      url: "https://modelscope.cn/models?name=asr",
-      detail: "Another large model hub used heavily by FunASR.",
-    },
-    {
-      name: "Vosk model zoo",
+      name: "Vosk · Lightweight offline models",
       url: "https://alphacephei.com/vosk/models",
-      detail: "Very lightweight offline baselines, including Italian.",
+      detail: "Very small offline models, including Italian.",
     },
     {
-      name: "SpeechBrain pretrained speech models",
-      url: "https://huggingface.co/speechbrain",
-      detail: "Research-quality ASR checkpoints and recipes; generally adapter-required.",
-    },
-    {
-      name: "Moonshine speech models",
-      url: "https://huggingface.co/models?search=moonshine%20speech%20recognition",
-      detail: "Small on-device-oriented ASR family worth benchmarking later.",
-    },
-    {
-      name: "Distil-Whisper models",
-      url: "https://huggingface.co/distil-whisper",
-      detail: "Compressed Whisper family for speed/quality comparisons.",
-    },
-    {
-      name: "Gladia open-source STT comparison",
+      name: "Gladia · Open STT overview",
       url: "https://www.gladia.io/blog/best-open-source-speech-to-text-models",
-      detail: "Curated discovery article covering strong recent open ASR families.",
-    },
-    {
-      name: "Reddit community ASR discovery",
-      url: "https://www.reddit.com/search/?q=offline%20speech%20recognition%20model",
-      detail: "Community reports and new-model discoveries; never treated as a compatibility authority.",
+      detail: "Curated overview of strong modern open speech-recognition families.",
     },
   ]
 
@@ -328,7 +296,12 @@ class STTModelManager {
   async getCurrentLanguageFromPreferences(): Promise<string> {
     try {
       const path = await BluetoothSdk.getSttModelPath()
-      if (path && (path.includes("/stt_models/custom") || path.includes("/stt_models/quarantine/"))) {
+      if (
+        path &&
+        (path.includes("/stt_models/custom") ||
+          path.includes("/stt_models/quarantine/") ||
+          path.includes("/stt_models/library/"))
+      ) {
         this.currentLanguage = "custom"
         return "custom"
       }
@@ -348,7 +321,11 @@ class STTModelManager {
     const path = await BluetoothSdk.getSttModelPath()
     if (!path) return {code: "", displayName: "No model selected", path: "", custom: false}
 
-    if (path.includes("/stt_models/custom") || path.includes("/stt_models/quarantine/")) {
+    if (
+      path.includes("/stt_models/custom") ||
+      path.includes("/stt_models/quarantine/") ||
+      path.includes("/stt_models/library/")
+    ) {
       try {
         const metadataPath = `${path}/${CUSTOM_METADATA}`
         if (await RNFS.exists(metadataPath)) {
@@ -394,15 +371,120 @@ class STTModelManager {
     modelPath: string,
     displayName: string,
     source: string,
-    sourceUrl?: string,
+    sourceUrl = "",
+    options?: {
+      id?: string
+      runtime?: ModelRuntime
+      languageCode?: string
+      runnable?: boolean
+    },
   ): Promise<void> {
     const metadata = {
+      id: options?.id ?? this.safeCatalogId(displayName),
       displayName,
       source,
-      sourceUrl: sourceUrl ?? "",
-      importedAt: new Date().toISOString(),
+      sourceUrl,
+      runtime: options?.runtime ?? "sherpa-onnx",
+      languageCode: options?.languageCode ?? "it-IT",
+      runnable: options?.runnable ?? true,
+      installedAt: new Date().toISOString(),
     }
     await RNFS.writeFile(`${modelPath}/${CUSTOM_METADATA}`, JSON.stringify(metadata, null, 2), "utf8")
+  }
+
+  private async readModelMetadata(modelPath: string): Promise<{
+    id?: string
+    displayName?: string
+    source?: string
+    sourceUrl?: string
+    runtime?: ModelRuntime
+    languageCode?: string
+    runnable?: boolean
+    installedAt?: string
+  } | null> {
+    try {
+      const metadataPath = `${modelPath}/${CUSTOM_METADATA}`
+      if (!(await RNFS.exists(metadataPath))) return null
+      return JSON.parse(await RNFS.readFile(metadataPath, "utf8"))
+    } catch {
+      return null
+    }
+  }
+
+  private getLibraryDirectory(): string {
+    return `${this.getModelDirectory()}/library`
+  }
+
+  private async findMetadataDirectories(root: string, depth = 0): Promise<string[]> {
+    if (!(await RNFS.exists(root)) || depth > 3) return []
+    const result: string[] = []
+    if (await RNFS.exists(`${root}/${CUSTOM_METADATA}`)) result.push(root)
+    const entries = await RNFS.readDir(root)
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      result.push(...(await this.findMetadataDirectories(entry.path, depth + 1)))
+    }
+    return result
+  }
+
+  async listInstalledModels(): Promise<InstalledModelEntry[]> {
+    const currentPath = await BluetoothSdk.getSttModelPath()
+    const root = this.getLibraryDirectory()
+    if (!(await RNFS.exists(root))) return []
+
+    const dirs = await this.findMetadataDirectories(root)
+    const entries: InstalledModelEntry[] = []
+    for (const modelPath of dirs) {
+      const metadata = await this.readModelMetadata(modelPath)
+      if (!metadata) continue
+      const runnable =
+        metadata.runtime === "sherpa-onnx"
+          ? await BluetoothSdk.validateSttModel(modelPath)
+          : metadata.runnable === true
+      entries.push({
+        id: metadata.id ?? this.safeCatalogId(modelPath),
+        displayName: metadata.displayName ?? modelPath.split("/").pop() ?? "Downloaded model",
+        path: modelPath,
+        source: metadata.source ?? "Downloaded",
+        sourceUrl: metadata.sourceUrl,
+        runtime: metadata.runtime ?? "unknown",
+        languageCode: metadata.languageCode ?? "it-IT",
+        runnable,
+        current: currentPath === modelPath,
+        installedAt: metadata.installedAt,
+      })
+    }
+    return entries.sort((a, b) => (b.installedAt ?? "").localeCompare(a.installedAt ?? ""))
+  }
+
+  async activateInstalledModel(modelPath: string): Promise<void> {
+    const metadata = await this.readModelMetadata(modelPath)
+    if (!metadata) throw new Error("Model metadata is missing")
+    const runtime = metadata.runtime ?? "unknown"
+    if (runtime !== "sherpa-onnx") {
+      throw new Error(`${runtime} runtime adapter is not installed yet`)
+    }
+    if (!(await BluetoothSdk.validateSttModel(modelPath))) {
+      throw new Error("Downloaded Sherpa model is no longer valid")
+    }
+    const activated = await BluetoothSdk.activateSttModel(modelPath, metadata.languageCode ?? "it-IT")
+    if (!activated) throw new Error("Downloaded model failed its native recognizer smoke test")
+    this.currentLanguage = "custom"
+  }
+
+  async deleteInstalledModel(modelPath: string): Promise<void> {
+    const libraryRoot = this.getLibraryDirectory()
+    if (!modelPath.startsWith(`${libraryRoot}/`)) {
+      throw new Error("Only downloaded library models can be deleted here")
+    }
+
+    const currentPath = await BluetoothSdk.getSttModelPath()
+    if (currentPath === modelPath) {
+      if (!(await this.isModelAvailable("it"))) await this.downloadModel("it")
+      await this.activateLanguage("it")
+    }
+
+    if (await RNFS.exists(modelPath)) await RNFS.unlink(modelPath)
   }
 
   getCurrentLanguage(): string {
@@ -449,7 +531,7 @@ class STTModelManager {
         const persistedPath = await BluetoothSdk.getSttModelPath()
         if (
           persistedPath &&
-          persistedPath.includes("/stt_models/custom") &&
+          (persistedPath.includes("/stt_models/custom") || persistedPath.includes("/stt_models/library/")) &&
           (await BluetoothSdk.validateSttModel(persistedPath))
         ) {
           return true
@@ -684,51 +766,48 @@ class STTModelManager {
     }
   }
 
-  /** Import a user-supplied Sherpa .tar.bz2 model into the persistent custom slot. */
+  /** Import a user-supplied Sherpa archive into a persistent library slot. */
   async importCustomArchive(
     sourcePath: string,
     languageCode = "it-IT",
     displayName = "Custom Sherpa model",
   ): Promise<void> {
-    const customDir = `${this.getModelDirectory()}/custom`
-    await RNFS.mkdir(this.getModelDirectory(), {NSURLIsExcludedFromBackupKey: true})
-    if (await RNFS.exists(customDir)) await RNFS.unlink(customDir)
-    await RNFS.mkdir(customDir, {NSURLIsExcludedFromBackupKey: true})
+    const safeName = this.safeCatalogId(displayName.replace(/\.tar\.bz2$/i, ""))
+    const destination = `${this.getLibraryDirectory()}/import-${safeName}-${Date.now()}`
+    await RNFS.mkdir(this.getLibraryDirectory(), {NSURLIsExcludedFromBackupKey: true})
+    await RNFS.mkdir(destination, {NSURLIsExcludedFromBackupKey: true})
 
-    const extracted = await BluetoothSdk.extractTarBz2(sourcePath, customDir)
-    if (!extracted) throw new Error("Could not extract custom Sherpa model archive")
+    try {
+      const extracted = await BluetoothSdk.extractTarBz2(sourcePath, destination)
+      if (!extracted) throw new Error("Could not extract custom Sherpa model archive")
 
-    let modelPath = customDir
-    if (!(await BluetoothSdk.validateSttModel(modelPath))) {
-      const entries = await RNFS.readDir(customDir)
-      const dirs = entries.filter((entry) => entry.isDirectory())
-      if (dirs.length === 1 && (await BluetoothSdk.validateSttModel(dirs[0].path))) modelPath = dirs[0].path
+      const modelPath = await this.resolveValidModelPath(destination)
+      if (!modelPath) {
+        throw new Error(
+          "Invalid Sherpa model. Expected tokens.txt plus encoder/decoder/joiner ONNX files, or supported CTC model files.",
+        )
+      }
+
+      await this.writeModelMetadata(modelPath, displayName, "Imported file", "", {
+        id: `import:${safeName}`,
+        runtime: "sherpa-onnx",
+        languageCode,
+        runnable: true,
+      })
+      const activated = await BluetoothSdk.activateSttModel(modelPath, languageCode)
+      if (!activated) throw new Error("Custom model failed its native recognizer smoke test")
+      this.currentLanguage = "custom"
+    } catch (error) {
+      await RNFS.unlink(destination).catch(() => undefined)
+      throw error
     }
-
-    if (!(await BluetoothSdk.validateSttModel(modelPath))) {
-      await RNFS.unlink(customDir).catch(() => undefined)
-      throw new Error(
-        "Invalid Sherpa model. Expected tokens.txt plus encoder/decoder/joiner ONNX files, or model.onnx for CTC.",
-      )
-    }
-
-    await this.writeModelMetadata(modelPath, displayName, "Imported file")
-    const activated = await BluetoothSdk.activateSttModel(modelPath, languageCode)
-    if (!activated) throw new Error("Custom model failed its native recognizer smoke test")
-    this.currentLanguage = "custom"
   }
 
   async activateCustomModel(languageCode = "it-IT"): Promise<void> {
-    const base = `${this.getModelDirectory()}/custom`
-    let modelPath = base
-    if (!(await BluetoothSdk.validateSttModel(modelPath))) {
-      const entries = (await RNFS.exists(base)) ? await RNFS.readDir(base) : []
-      const dirs = entries.filter((entry) => entry.isDirectory())
-      if (dirs.length === 1 && (await BluetoothSdk.validateSttModel(dirs[0].path))) modelPath = dirs[0].path
-    }
-    if (!(await BluetoothSdk.validateSttModel(modelPath))) throw new Error("No valid custom model is installed")
-    const activated = await BluetoothSdk.activateSttModel(modelPath, languageCode)
-    if (!activated) throw new Error("Custom model failed its native recognizer smoke test")
+    const installed = await this.listInstalledModels()
+    const candidate = installed.find((model) => model.runtime === "sherpa-onnx" && model.runnable)
+    if (!candidate) throw new Error("No valid downloaded Sherpa model is installed")
+    await this.activateInstalledModel(candidate.path)
     this.currentLanguage = "custom"
   }
 
@@ -1102,17 +1181,18 @@ class STTModelManager {
     }
 
     const safeId = this.safeCatalogId(model.id)
-    const quarantineRoot = `${this.getModelDirectory()}/quarantine/${safeId}`
+    const libraryRoot = this.getLibraryDirectory()
+    const installRoot = `${libraryRoot}/${safeId}`
     const tempPath = `${RNFS.TemporaryDirectoryPath}/g2labs-${safeId}.tar.bz2`
 
-    await RNFS.mkdir(`${this.getModelDirectory()}/quarantine`, {NSURLIsExcludedFromBackupKey: true})
-    if (await RNFS.exists(quarantineRoot)) await RNFS.unlink(quarantineRoot)
+    await RNFS.mkdir(libraryRoot, {NSURLIsExcludedFromBackupKey: true})
+    if (await RNFS.exists(installRoot)) await RNFS.unlink(installRoot)
     if (await RNFS.exists(tempPath)) await RNFS.unlink(tempPath)
-    await RNFS.mkdir(quarantineRoot, {NSURLIsExcludedFromBackupKey: true})
+    await RNFS.mkdir(installRoot, {NSURLIsExcludedFromBackupKey: true})
 
     try {
       if (model.directFiles?.length) {
-        await this.downloadDirectFiles(model.directFiles, quarantineRoot, onProgress)
+        await this.downloadDirectFiles(model.directFiles, installRoot, onProgress)
       } else if (model.downloadUrl) {
         const download = RNFS.downloadFile({
           fromUrl: model.downloadUrl,
@@ -1137,18 +1217,23 @@ class STTModelManager {
         }
         this.downloadJobId = undefined
 
-        const extracted = await BluetoothSdk.extractTarBz2(tempPath, quarantineRoot)
+        const extracted = await BluetoothSdk.extractTarBz2(tempPath, installRoot)
         if (!extracted) throw new Error("Archive extraction failed in quarantine")
       }
 
-      const modelPath = await this.resolveValidModelPath(quarantineRoot)
+      const modelPath = await this.resolveValidModelPath(installRoot)
       if (!modelPath) {
         throw new Error(
           "QUARANTINED / REJECTED: download does not match a supported online Sherpa layout (tokens + transducer or supported CTC).",
         )
       }
 
-      await this.writeModelMetadata(modelPath, model.displayName, model.source, model.sourceUrl)
+      await this.writeModelMetadata(modelPath, model.displayName, model.source, model.sourceUrl, {
+        id: model.id,
+        runtime: "sherpa-onnx",
+        languageCode: model.languageCode,
+        runnable: true,
+      })
       const activated = await BluetoothSdk.activateSttModel(modelPath, model.languageCode)
       if (!activated) {
         throw new Error(
@@ -1158,6 +1243,7 @@ class STTModelManager {
       this.currentLanguage = "custom"
     } catch (error) {
       this.downloadJobId = undefined
+      await RNFS.unlink(installRoot).catch(() => undefined)
       throw error
     } finally {
       await RNFS.unlink(tempPath).catch(() => undefined)
@@ -1207,7 +1293,12 @@ class STTModelManager {
       this.downloadJobId = undefined
     }
 
-    await this.writeModelMetadata(destination, model.displayName, model.source, model.sourceUrl)
+    await this.writeModelMetadata(destination, model.displayName, model.source, model.sourceUrl, {
+      id: model.id,
+      runtime: model.runtime,
+      languageCode: model.languageCode,
+      runnable: model.runtime === "sherpa-onnx",
+    })
     return destination
   }
 
