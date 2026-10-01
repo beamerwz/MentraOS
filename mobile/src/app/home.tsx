@@ -149,6 +149,9 @@ export default function G2LabsHome() {
     typeof glassesStatus.case?.battery === "number" && glassesStatus.case.battery >= 0
       ? glassesStatus.case.battery
       : null
+  // G2 firmware reports the charging-case battery only when that telemetry is
+  // actually present (typically around case/open/charging events). Never invent a
+  // percentage; retain the last real sample and label it as LAST when live data stops.
   const displayedCaseBattery = caseBattery ?? lastKnownCaseBattery
   const caseBatteryIsCached = caseBattery == null && lastKnownCaseBattery != null
 
