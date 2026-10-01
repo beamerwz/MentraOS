@@ -8,7 +8,7 @@ import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
 import {BgTimer, engine} from "@mentra/engine"
-import {buildMentraUiShim, buildMiniappGlobalsScript, miniappLauncher} from "@mentra/engine-host-internal"
+import {buildMentraUiShim, buildMiniappGlobalsScript, miniappLauncher, sttModelManager as STT} from "@mentra/engine-host-internal"
 import {devServerBridge} from "@mentra/engine-host-internal/devtools"
 import {useNavigationStore} from "@/stores/navigation"
 import CapsuleMenu from "@/effects/CapsuleMenu"
@@ -49,6 +49,8 @@ interface LocalMiniappViewProps {
   onExit: () => void
   onShouldCapture?: () => void
   showCapsule?: boolean
+  /** G2 Glasses integrated Captions: expose safe host-side model switching to this WebView only. */
+  g2ModelControl?: boolean
 }
 
 function LocalMiniappView({
@@ -61,6 +63,7 @@ function LocalMiniappView({
   onExit,
   onShouldCapture = () => undefined,
   showCapsule = false,
+  g2ModelControl = false,
 }: LocalMiniappViewProps) {
   const {theme} = useAppTheme()
   const insets = useSaferAreaInsets()
@@ -343,9 +346,93 @@ function LocalMiniappView({
     [packageName, refreshUiBinding],
   )
 
+  const pushG2ModelState = useCallback(async () => {
+    if (!g2ModelControl || packageName !== "com.mentra.captions" || !webViewRef.current) return
+    try {
+      const current = await STT.getCurrentModelSummary()
+      const presetCodes = ["it", "nemotron_it_80", "nemotron_it_160", "nemotron_it_320", "nemotron_it_560", "nemotron_it_1120"]
+      const models: Array<{key: string; name: string; active: boolean}> = []
+
+      for (const code of presetCodes) {
+        try {
+          const info = await STT.getLanguageInfo(code)
+          if (!info.downloaded) continue
+          models.push({
+            key: `preset:${code}`,
+            name: info.displayName,
+            active: current.code === code && !current.custom,
+          })
+        } catch {
+          // Missing/experimental entry in an older build: skip it.
+        }
+      }
+
+      const installed = (await STT.listInstalledModels()).filter((entry) => entry.runnable)
+      for (const entry of installed) {
+        models.push({
+          key: `library:${entry.id}`,
+          name: entry.displayName,
+          active: entry.current || (!!current.path && current.path === entry.path),
+        })
+      }
+
+      const payload = JSON.stringify({
+        type: "g2_model_state",
+        currentName: current.displayName,
+        models,
+      })
+      webViewRef.current?.injectJavaScript(
+        `window.dispatchEvent(new CustomEvent("g2-model-state",{detail:${payload}}));true;`,
+      )
+    } catch (error) {
+      console.warn("G2 Captions model-state bridge failed", error)
+    }
+  }, [g2ModelControl, packageName])
+
+  const switchG2CaptionModel = useCallback(
+    async (key: string) => {
+      if (!g2ModelControl || packageName !== "com.mentra.captions") return
+      try {
+        if (key.startsWith("preset:")) {
+          await STT.activateLanguage(key.slice("preset:".length))
+        } else if (key.startsWith("library:")) {
+          const id = key.slice("library:".length)
+          const installed = await STT.listInstalledModels()
+          const target = installed.find((entry) => entry.id === id && entry.runnable)
+          if (!target) throw new Error("Downloaded model is no longer available")
+          await STT.activateInstalledModel(target.path)
+        } else {
+          throw new Error("Unknown model selection")
+        }
+      } catch (error) {
+        console.warn("G2 Captions model switch failed", error)
+      } finally {
+        await pushG2ModelState()
+      }
+    },
+    [g2ModelControl, packageName, pushG2ModelState],
+  )
+
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
       if (!packageName) return
+
+      if (g2ModelControl && packageName === "com.mentra.captions") {
+        try {
+          const g2Message = JSON.parse(event.nativeEvent.data) as {type?: string; key?: string}
+          if (g2Message.type === "g2_model_request") {
+            void pushG2ModelState()
+            return
+          }
+          if (g2Message.type === "g2_model_switch" && typeof g2Message.key === "string") {
+            void switchG2CaptionModel(g2Message.key)
+            return
+          }
+        } catch {
+          // Normal Mentra envelopes continue through the existing bridge.
+        }
+      }
+
       // Observe the miniapp's `ready` envelope (posted by mentra.ready() in
       // the WebView shim). This is the real "UI mounted and bridge wired up"
       // signal — gate the splash on it instead of onLoadEnd. We only observe;
@@ -353,6 +440,7 @@ function LocalMiniappView({
       // UI_OPEN to the background), so we must NOT early-return here.
       if (!connectedRef.current && isReadyEnvelope(event.nativeEvent.data)) {
         markConnected()
+        if (g2ModelControl) BgTimer.setTimeout(() => void pushG2ModelState(), 150)
       }
       // Intercept `dev_log` envelopes from the WebView's console-tap shim
       // (miniappGlobals.ts wraps console.log/warn/error to post these).
@@ -367,7 +455,7 @@ function LocalMiniappView({
       const mj = getMentraJS()
       mj?.uiRouter.routeFromWebView(packageName, event.nativeEvent.data)
     },
-    [packageName, markConnected],
+    [packageName, markConnected, g2ModelControl, pushG2ModelState, switchG2CaptionModel],
   )
 
   const handleNavStateChange = useCallback(({canGoBack}: {canGoBack: boolean}) => {
