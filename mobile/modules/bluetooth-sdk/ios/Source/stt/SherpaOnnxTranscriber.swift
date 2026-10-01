@@ -365,7 +365,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
 
     static var configuredInferenceThreads: Int {
         let stored = UserDefaults.standard.integer(forKey: inferenceThreadsDefaultsKey)
-        return stored == 0 ? 3 : max(1, min(4, stored))
+        return stored == 0 ? 2 : max(1, min(4, stored))
     }
 
     @discardableResult
@@ -377,7 +377,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
     // Never wait just to create a batch. If several PCM chunks are already queued,
     // merge up to this much audio before crossing Swift -> sherpa/ORT so we catch up
     // with far less per-chunk decoder overhead.
-    private static let MAX_CATCHUP_BATCH_MS: Double = 80.0
+    private static let MAX_CATCHUP_BATCH_MS: Double = 40.0
 
     private let pcmQueue = DispatchQueue(label: "com.augmentos.sherpaonnx.pcmQueue", qos: .userInteractive)
     private let pcmAvailable = DispatchSemaphore(value: 0)
@@ -551,9 +551,9 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                         enableEndpoint: true,
                         // Continuous-caption tuning: keep partials streaming immediately,
                         // but do not reset decoder state on every short conversational pause.
-                        rule1MinTrailingSilence: 2.4,
-                        rule2MinTrailingSilence: 1.2,
-                        rule3MinUtteranceLength: 20.0
+                        rule1MinTrailingSilence: 1.8,
+                        rule2MinTrailingSilence: 0.8,
+                        rule3MinUtteranceLength: 14.0
                     )
 
                     // The first native recognizer construction owns ORT for this process.
@@ -607,9 +607,9 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                         enableEndpoint: true,
                         // Continuous-caption tuning: keep partials streaming immediately,
                         // but do not reset decoder state on every short conversational pause.
-                        rule1MinTrailingSilence: 2.4,
-                        rule2MinTrailingSilence: 1.2,
-                        rule3MinUtteranceLength: 20.0
+                        rule1MinTrailingSilence: 1.8,
+                        rule2MinTrailingSilence: 0.8,
+                        rule3MinUtteranceLength: 14.0
                     )
 
                     // The first native recognizer construction owns ORT for this process.
@@ -682,11 +682,9 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
     private func handleTranscriptionResult(text: String, isFinal: Bool) {
         let g2TraceResultNs = DispatchTime.now().uptimeNanoseconds
         G2LabDiagnostics.markTranscript(ns: g2TraceResultNs)
-        Bridge.log("G2LAB_TRACE T3_SHERPA_RESULT ns=\(g2TraceResultNs) final=\(isFinal) chars=\(text.count) text=\(text.debugDescription)")
         // Forward to delegate if set. Measure main-queue handoff separately.
         DispatchQueue.main.async { [weak self] in
             let g2TraceMainNs = DispatchTime.now().uptimeNanoseconds
-            Bridge.log("G2LAB_TRACE T4_MAIN_STT_CALLBACK ns=\(g2TraceMainNs) queueMs=\(String(format: "%.3f", Double(g2TraceMainNs - g2TraceResultNs) / 1_000_000.0)) final=\(isFinal)")
             if isFinal {
                 STTTools.didReceiveFinalTranscription(text)
             } else {
@@ -724,7 +722,6 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
             let g2TraceAudioMs = Double(g2TraceSamples) * 1000.0 / Double(Self.SAMPLE_RATE)
             self.lastQueuedAudioMs = g2TraceAudioMs
             G2LabDiagnostics.markQueue(depth: self.pcmBuffers.count, audioMs: g2TraceAudioMs)
-            Bridge.log("G2LAB_TRACE STT_QUEUE ns=\(g2TraceQueueNs) depthBefore=\(queueSizeBefore) depthAfter=\(self.pcmBuffers.count) bytes=\(pcm16le.count) audioMs=\(String(format: "%.2f", g2TraceAudioMs))")
 
             // Keep queue size manageable
             if self.pcmBuffers.count > Self.QUEUE_CAPACITY {
@@ -777,6 +774,20 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
             pcmQueue.sync {
                 guard !self.pcmBuffers.isEmpty else { return }
 
+                // Fast live path: avoid an extra Data allocation/copy when only
+                // one PCM chunk is waiting, which is the normal zero-backlog case.
+                if self.pcmBuffers.count == 1 {
+                    let next = self.pcmBuffers.removeFirst()
+                    let samples = next.count / MemoryLayout<Int16>.size
+                    batchAudioMs = Double(samples) * 1000.0 / Double(Self.SAMPLE_RATE)
+                    batchChunks = 1
+                    audioData = next
+                    remainingDepth = 0
+                    return
+                }
+
+                // Catch-up path: coalesce only a short window so backlog recovery
+                // does not add avoidable display latency.
                 var merged = Data()
                 while !self.pcmBuffers.isEmpty {
                     let next = self.pcmBuffers.removeFirst()
@@ -807,7 +818,6 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     audioMs: max(self.lastQueuedAudioMs, 0)
                 )
                 let g2TraceDecodeStartNs = DispatchTime.now().uptimeNanoseconds
-                Bridge.log("G2LAB_TRACE STT_DECODE_START ns=\(g2TraceDecodeStartNs) bytes=\(data.count) chunks=\(batchChunks) audioMs=\(String(format: "%.2f", batchAudioMs))")
                 // Synchronize access to recognizer to prevent race conditions
                 objc_sync_enter(self)
                 defer { objc_sync_exit(self) }
@@ -840,7 +850,6 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                             decodeMs: g2TraceDecodeMs,
                             audioMs: batchAudioMs
                         )
-                        Bridge.log("G2LAB_TRACE STT_DECODE_DONE ns=\(g2TraceDecodeDoneNs) passes=\(decodeCount) decodeMs=\(String(format: "%.3f", g2TraceDecodeMs))")
                     }
 
                     // If utterance endpoint detected
@@ -866,7 +875,6 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                             let g2TracePartialNs = DispatchTime.now().uptimeNanoseconds
                             let g2TraceDecodeMs = Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0
                             G2LabDiagnostics.markPartial(ns: g2TracePartialNs, decodeMs: g2TraceDecodeMs, audioMs: batchAudioMs)
-                            Bridge.log("G2LAB_TRACE FIRST_CHANGED_PARTIAL ns=\(g2TracePartialNs) decodeMs=\(String(format: "%.3f", Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0)) chars=\(partial.count)")
                             handleTranscriptionResult(text: partial, isFinal: false)
                             lastPartialResult = partial
                         }
