@@ -40,11 +40,9 @@ class LocalSttFallbackCoordinator {
     // previous session would cause native to feed Sherpa before any miniapp
     // registered a subscription.
     useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
-    // Keep the native DeviceStore mirror in sync. DeviceManager.handlePcm()
-    // gates PCM -> Sherpa on this native flag, not on the JS store.
-    void BluetoothSdk.updateBluetoothSettings({local_stt_fallback_active: false}).catch((err) => {
-      this.log(`failed to clear native local STT flag on boot: ${err}`)
-    })
+    // Do not enqueue an asynchronous native "off" write here. This object is
+    // constructed very early; a delayed write can otherwise land after the
+    // first Captions subscription and silently disable PCM -> Sherpa.
   }
 
   /**
@@ -101,6 +99,8 @@ class LocalSttFallbackCoordinator {
     const shouldBeActive = this.shouldUseLocalStt()
     if (shouldBeActive && !this.localActive) {
       await this.startLocalStt()
+    } else if (shouldBeActive && this.localActive) {
+      await this.rearmLocalStt()
     } else if (!shouldBeActive && this.localActive) {
       this.stopLocalStt(this.hasTranscriptionSubscription ? "cloud reconnected" : "subscription gone")
     }
@@ -112,7 +112,16 @@ class LocalSttFallbackCoordinator {
     // selection back into JS before checking availability so Italian,
     // Nemotron, and custom models are not mistaken for the default English slot.
     await sttModelManager.getCurrentLanguageFromPreferences()
-    const modelAvailable = await sttModelManager.isModelAvailable()
+    let modelAvailable = await sttModelManager.isModelAvailable()
+    if (!modelAvailable && (await sttModelManager.isModelAvailable("it"))) {
+      try {
+        await sttModelManager.activateLanguage("it")
+        modelAvailable = true
+        this.log("current model unavailable — restored Italian Built-in")
+      } catch (err) {
+        this.log(`Italian fallback activation failed: ${err}`)
+      }
+    }
     if (!modelAvailable) {
       this.log("local stt model is not available yet — skipping activation")
       return
@@ -140,6 +149,17 @@ class LocalSttFallbackCoordinator {
     useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, true)
     this.localActive = true
     this.log("local stt active: native PCM -> Sherpa feed enabled")
+  }
+
+  private async rearmLocalStt(): Promise<void> {
+    try {
+      await BluetoothSdk.updateBluetoothSettings({local_stt_fallback_active: true})
+      useSettingsStore.getState().setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, true)
+      this.log("local stt re-armed: native PCM -> Sherpa gate asserted")
+    } catch (err) {
+      this.log(`failed to re-arm native local STT PCM feed: ${err}`)
+      this.localActive = false
+    }
   }
 
   private stopLocalStt(reason: string): void {
