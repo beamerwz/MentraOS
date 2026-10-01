@@ -1113,16 +1113,20 @@ class STTModelManager {
   }
 
   async browseRemoteModels(query = ""): Promise<RemoteCatalogModel[]> {
-    const [sherpa, huggingFace, whisperCpp] = await Promise.allSettled([
+    const [sherpa, huggingFace] = await Promise.allSettled([
       this.fetchSherpaReleaseCatalog(query),
       this.fetchHuggingFaceCatalog(query),
-      this.fetchWhisperCppCatalog(query),
     ])
 
-    const result: RemoteCatalogModel[] = [...this.fetchVoskCatalog(query)]
+    const result: RemoteCatalogModel[] = []
     if (sherpa.status === "fulfilled") result.push(...sherpa.value)
-    if (huggingFace.status === "fulfilled") result.push(...huggingFace.value)
-    if (whisperCpp.status === "fulfilled") result.push(...whisperCpp.value)
+    if (huggingFace.status === "fulfilled") {
+      result.push(
+        ...huggingFace.value.filter(
+          (model) => model.runtime === "sherpa-onnx" && model.downloadMode === "test",
+        ),
+      )
+    }
 
     const seen = new Set<string>()
     const deduped = result.filter((model) => {
@@ -1133,23 +1137,19 @@ class STTModelManager {
     })
 
     if (deduped.length === 0) {
-      const reasons = [sherpa, huggingFace, whisperCpp]
+      const reasons = [sherpa, huggingFace]
         .filter((entry): entry is PromiseRejectedResult => entry.status === "rejected")
         .map((entry) => String(entry.reason))
         .join(" · ")
       if (reasons) throw new Error(reasons)
     }
 
-    const rank = (model: RemoteCatalogModel) => {
-      if (model.downloadMode === "test" && model.compatibility === "native-likely") return 0
-      if (model.downloadMode === "test") return 1
-      if (model.runtime === "whisper.cpp") return 3
-      if (model.runtime === "vosk") return 4
-      return 2
-    }
-
     return deduped
-      .sort((a, b) => rank(a) - rank(b) || a.displayName.localeCompare(b.displayName))
+      .sort((a, b) => {
+        const rankA = a.compatibility === "native-likely" ? 0 : 1
+        const rankB = b.compatibility === "native-likely" ? 0 : 1
+        return rankA - rankB || a.displayName.localeCompare(b.displayName)
+      })
       .slice(0, 80)
   }
 
