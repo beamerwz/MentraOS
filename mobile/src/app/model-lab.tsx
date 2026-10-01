@@ -458,6 +458,28 @@ export default function G2ModelLab() {
           </RNText>
         </View>
 
+        <Pressable
+          onPress={() => router.push("/thread-lab")}
+          style={({pressed}) => ({
+            marginTop: 14,
+            backgroundColor: pressed ? "#211332" : CARD,
+            borderWidth: 1,
+            borderColor: "#4D2A66",
+            borderRadius: 16,
+            padding: 14,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+          })}>
+          <View style={{flex: 1}}>
+            <RNText style={{color: "white", fontSize: 14, fontWeight: "900"}}>Thread Performance Lab</RNText>
+            <RNText style={{color: "#8F819B", fontSize: 11, marginTop: 4}}>
+              Compare 1 / 2 / 3 / 4 Sherpa inference threads with saved RTF and latency results.
+            </RNText>
+          </View>
+          <RNText style={{color: PURPLE_SOFT, fontSize: 20, marginLeft: 12}}>›</RNText>
+        </Pressable>
+
         <RNText style={{color: "#B9A6C8", fontSize: 12, fontWeight: "900", letterSpacing: 1.2, marginTop: 26, marginBottom: 10}}>
           RECOMMENDED
         </RNText>
