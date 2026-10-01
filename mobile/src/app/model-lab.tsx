@@ -274,13 +274,15 @@ export default function G2ModelLab() {
         setStatus(`Downloading ${info.displayName}…`)
         await STT.downloadModel(code, (p) => setProgress(p.percentage))
       }
-      setStatus("Validating + loading model…")
-      await STT.activateLanguage(code)
+      setStatus("Validating + staging model safely…")
+      const activation = await STT.activateLanguage(code)
       await refreshModelState()
-      const snapshot = await refreshDiagnostics()
-      if (snapshot?.modelState === "ready") setStatus("MODEL LIVE · open Captions and speak")
-      else if (snapshot?.modelState === "staged-relaunch") setStatus("MODEL STAGED · close/reopen once")
-      else setStatus("Model selected · runtime finishing initialization")
+      await refreshDiagnostics()
+      setStatus(
+        activation === "staged-relaunch"
+          ? "MODEL STAGED · close G2 Glasses completely and reopen once to switch safely"
+          : "MODEL LIVE · open Captions and speak",
+      )
     } catch (error: any) {
       setStatus(error?.message ?? "Model activation failed")
       await refreshDiagnostics()
@@ -303,10 +305,14 @@ export default function G2ModelLab() {
             void (async () => {
               try {
                 setBusy(`delete-preset:${code}`)
-                await STT.deleteModel(code)
+                const result = await STT.deleteModel(code)
                 await refreshModelState()
                 await refreshDiagnostics()
-                setStatus(`Deleted · ${title}`)
+                setStatus(
+                  result.deferred
+                    ? `DELETE QUEUED · ${title} is still loaded by this process. Close/reopen once; it will be removed automatically.`
+                    : `Deleted · ${title}`,
+                )
               } catch (error: any) {
                 setStatus(error?.message ?? "Could not delete downloaded model")
               } finally {
@@ -330,11 +336,15 @@ export default function G2ModelLab() {
       if (await RNFS.exists(temp)) await RNFS.unlink(temp)
       const source = decodeURIComponent(asset.uri.replace("file://", ""))
       await RNFS.copyFile(source, temp)
-      await STT.importCustomArchive(temp, "it-IT", asset.name || "Custom Sherpa model")
+      const activation = await STT.importCustomArchive(temp, "it-IT", asset.name || "Custom Sherpa model")
       await RNFS.unlink(temp).catch(() => undefined)
       await refreshModelState()
-      setStatus(`INSTALLED + SELECTED · ${asset.name}`)
       await refreshDiagnostics()
+      setStatus(
+        activation === "staged-relaunch"
+          ? `INSTALLED + STAGED · ${asset.name} · close/reopen once before testing`
+          : `INSTALLED + LIVE · ${asset.name}`,
+      )
     } catch (error: any) {
       setStatus(error?.message ?? "Custom import failed")
     } finally {
@@ -357,11 +367,15 @@ export default function G2ModelLab() {
   const useInstalled = async (entry: InstalledModelEntry) => {
     try {
       setBusy(`library:${entry.id}`)
-      setStatus(`Loading ${entry.displayName}…`)
-      await STT.activateInstalledModel(entry.path)
+      setStatus(`Staging ${entry.displayName} safely…`)
+      const activation = await STT.activateInstalledModel(entry.path)
       await refreshModelState()
       await refreshDiagnostics()
-      setStatus(`SELECTED · ${entry.displayName}`)
+      setStatus(
+        activation === "staged-relaunch"
+          ? `STAGED · ${entry.displayName} · close/reopen G2 Glasses once`
+          : `LIVE · ${entry.displayName}`,
+      )
     } catch (error: any) {
       setStatus(error?.message ?? "Could not activate downloaded model")
     } finally {
@@ -384,10 +398,14 @@ export default function G2ModelLab() {
             void (async () => {
               try {
                 setBusy(`delete:${entry.id}`)
-                await STT.deleteInstalledModel(entry.path)
+                const result = await STT.deleteInstalledModel(entry.path)
                 await refreshModelState()
                 await refreshDiagnostics()
-                setStatus(`Deleted · ${entry.displayName}`)
+                setStatus(
+                  result.deferred
+                    ? `DELETE QUEUED · ${entry.displayName} is still loaded by this process. Close/reopen once; it will be removed automatically.`
+                    : `Deleted · ${entry.displayName}`,
+                )
               } catch (error: any) {
                 setStatus(error?.message ?? "Could not delete model")
               } finally {
@@ -419,10 +437,14 @@ export default function G2ModelLab() {
       setProgress(0)
       if (model.downloadMode === "test") {
         setStatus(`Downloading + installing ${model.displayName}…`)
-        await STT.downloadAndTestCatalogModel(model, (p) => setProgress(p.percentage))
+        const activation = await STT.downloadAndTestCatalogModel(model, (p) => setProgress(p.percentage))
         await refreshModelState()
         await refreshDiagnostics()
-        setStatus(`INSTALLED + SELECTED · ${model.displayName}`)
+        setStatus(
+          activation === "staged-relaunch"
+            ? `INSTALLED + STAGED · ${model.displayName} · close/reopen once before testing`
+            : `INSTALLED + LIVE · ${model.displayName}`,
+        )
       } else {
         setStatus(`Downloading ${model.displayName}…`)
         await STT.downloadCatalogModelToLibrary(model, (p) => setProgress(p.percentage))
@@ -708,7 +730,7 @@ export default function G2ModelLab() {
               installed?.runnable
                 ? installed.current
                   ? "ACTIVE"
-                  : "SWITCH"
+                  : "STAGE"
                 : installed
                   ? "DOWNLOADED"
                   : direct
