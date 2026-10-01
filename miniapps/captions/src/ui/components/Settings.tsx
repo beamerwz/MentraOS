@@ -4,6 +4,7 @@ import {
   CAPTION_TIMEOUT_OPTIONS_SECONDS,
   DEFAULT_CAPTION_TIMEOUT_SECONDS,
   type CaptionPosition,
+  type CloudClientStatus,
 } from "../../shared/types"
 import type {CaptionSettings} from "../hooks/useSettings"
 import {DisplayPreview} from "../hooks/useTranscripts"
@@ -31,6 +32,7 @@ interface SettingsProps {
   settings: CaptionSettings | null
   canPosition: boolean
   displayPreview: DisplayPreview | null
+  cloudStatus: CloudClientStatus
   accentColor?: string
   accentForeground?: string
   onUpdateUseOfflineStt: (enabled: boolean) => Promise<boolean>
@@ -45,6 +47,7 @@ export function Settings({
   settings,
   canPosition,
   displayPreview,
+  cloudStatus,
   accentColor = "#6DAEA6",
   accentForeground = "#FFFFFF",
   onUpdateUseOfflineStt,
@@ -186,33 +189,85 @@ export function Settings({
           Speech to Text
         </h2>
 
-        <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-zinc-800">
-          <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <p className="text-base font-medium text-gray-900 dark:text-zinc-50 font-['Red_Hat_Display']">
-                Use Offline Speech to Text Models
-              </p>
-              <p className="mt-1 text-sm text-gray-500 dark:text-zinc-400 font-['Red_Hat_Display']">
-                Uses the downloaded on-device model instead of cloud transcription.
-              </p>
+        {G2_LABS ? (
+          <div className="bg-[#100b16] rounded-2xl p-4 border border-[#2d2039]">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-white font-['Red_Hat_Display']">Speech engine</p>
+                <p className="mt-1 text-xs text-[#9b8cae] font-['Red_Hat_Display']">
+                  Local is fastest/private. Mentra Cloud uses cloud STT with automatic local fallback.
+                </p>
+              </div>
+              <span className={`shrink-0 rounded-lg px-2 py-1 text-[10px] font-bold ${
+                cloudStatus.status === "connected" ? "bg-[#17301f] text-[#6fe3a5]" : "bg-[#2a202e] text-[#a99db8]"
+              }`}>
+                CLOUD {cloudStatus.status.toUpperCase()}
+              </span>
             </div>
-            <button
-              onClick={() => handleUseOfflineSttChange(!useOfflineStt)}
-              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${
-                useOfflineStt ? "" : "bg-gray-300 dark:bg-zinc-600"
-              }`}
-              style={useOfflineStt ? {backgroundColor: accentColor} : {}}
-              role="switch"
-              aria-label="Use Offline Speech to Text Models"
-              aria-checked={useOfflineStt}>
-              <span
-                className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
-                  useOfflineStt ? "translate-x-6" : "translate-x-1"
-                }`}
-              />
-            </button>
+
+            <div className="grid grid-cols-2 gap-2 mt-4">
+              <button
+                onClick={() => void handleUseOfflineSttChange(true)}
+                className={`rounded-xl border px-3 py-3 text-xs font-bold ${
+                  useOfflineStt
+                    ? "border-[#8b5cf6] bg-[#2b1640] text-white"
+                    : "border-[#2d2039] bg-[#0b0710] text-[#9b8cae]"
+                }`}>
+                LOCAL · ON DEVICE
+              </button>
+              <button
+                onClick={() => void handleUseOfflineSttChange(false)}
+                className={`rounded-xl border px-3 py-3 text-xs font-bold ${
+                  !useOfflineStt
+                    ? "border-[#8b5cf6] bg-[#2b1640] text-white"
+                    : "border-[#2d2039] bg-[#0b0710] text-[#9b8cae]"
+                }`}>
+                MENTRA CLOUD
+              </button>
+            </div>
+
+            {!useOfflineStt && cloudStatus.status !== "connected" && (
+              <div className="mt-3 rounded-xl border border-[#47304f] bg-[#120b17] p-3">
+                <p className="text-xs text-[#c4b5fd]">
+                  Cloud is not connected. Captions continue locally until Mentra Cloud becomes available.
+                </p>
+                <button
+                  onClick={() => postG2HostMessage({type: "g2_cloud_login"})}
+                  className="mt-3 rounded-lg bg-[#6d35a8] px-3 py-2 text-[11px] font-bold text-white">
+                  SIGN IN / CONNECT MENTRA CLOUD
+                </button>
+              </div>
+            )}
           </div>
-        </div>
+        ) : (
+          <div className="bg-white dark:bg-zinc-900 rounded-2xl p-4 shadow-sm border border-gray-100 dark:border-zinc-800">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-base font-medium text-gray-900 dark:text-zinc-50 font-['Red_Hat_Display']">
+                  Use Offline Speech to Text Models
+                </p>
+                <p className="mt-1 text-sm text-gray-500 dark:text-zinc-400 font-['Red_Hat_Display']">
+                  Uses the downloaded on-device model instead of cloud transcription.
+                </p>
+              </div>
+              <button
+                onClick={() => handleUseOfflineSttChange(!useOfflineStt)}
+                className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${
+                  useOfflineStt ? "" : "bg-gray-300 dark:bg-zinc-600"
+                }`}
+                style={useOfflineStt ? {backgroundColor: accentColor} : {}}
+                role="switch"
+                aria-label="Use Offline Speech to Text Models"
+                aria-checked={useOfflineStt}>
+                <span
+                  className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
+                    useOfflineStt ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+          </div>
+        )}
 
         {G2_LABS && (
           <div className="bg-[#100b16] rounded-2xl p-4 border border-[#2d2039]">
