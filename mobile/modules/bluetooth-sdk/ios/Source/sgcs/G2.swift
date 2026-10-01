@@ -4671,6 +4671,17 @@ class G2: NSObject, SGCManager {
             }
 
             if eventType == .doubleClick {
+                // G2 LABS interaction:
+                //   Captions stopped -> double tap opens native dashboard.
+                //   Captions running -> JS receives this same double_tap and
+                //   stops/clears Captions; do NOT flash the dashboard first.
+                let g2CaptionsActive =
+                    DeviceStore.shared.get("bluetooth", "g2_captions_active") as? Bool ?? false
+                if g2CaptionsActive {
+                    Bridge.log("G2 LABS: double tap while Captions active -> stop/close handled by JS")
+                    return
+                }
+
                 // trigger dashboard:
                 let isHeadUp = DeviceStore.shared.get("glasses", "headUp") as? Bool ?? false
 
