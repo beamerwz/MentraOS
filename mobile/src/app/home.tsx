@@ -445,7 +445,9 @@ export default function G2LabsHome() {
 
         {/* Full-width 2×1 status tile below the launcher grid. */}
         <Pressable
-          onPress={() => router.push("/model-lab")}
+          /* Full-width 2×1 status tile below the launcher grid. */}
+        <Pressable
+          onPress={() => router.push("/thread-lab")}
           style={({pressed}) => ({
             marginTop: 20,
             width: "100%",
@@ -464,7 +466,7 @@ export default function G2LabsHome() {
             </RNText>
             <RNText style={{color: "white", fontSize: 17, fontWeight: "800", marginTop: 5}}>Offline STT Lab</RNText>
             <RNText style={{color: "#8F819B", fontSize: 12, marginTop: 3}}>
-              Benchmark latency, RTF, backlog and G2 display path.
+              Benchmark threads, latency, RTF, backlog and G2 display path.
             </RNText>
           </View>
           <View
