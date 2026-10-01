@@ -17,6 +17,7 @@ import {engine} from "@mentra/engine"
 import {customFontsToLoad} from "@/theme"
 import {loadDateFnsLocale} from "@/utils/formatDate"
 import {AllEffects} from "@/effects/AllEffects"
+import {G2WhisperCaptionBridge} from "@/components/G2WhisperCaptionBridge"
 import {AllProviders} from "@/contexts/AllProviders"
 import "@/global.css"
 import {logBuffer} from "@mentra/engine-host-internal"
@@ -109,6 +110,7 @@ function Root() {
   return (
     <AllProviders>
       <AllEffects />
+      <G2WhisperCaptionBridge />
     </AllProviders>
   )
 }
