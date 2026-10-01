@@ -1084,6 +1084,46 @@ class STTModelManager {
       }))
   }
 
+  async browseRemoteModels(query = ""): Promise<RemoteCatalogModel[]> {
+    const [sherpa, huggingFace, whisperCpp] = await Promise.allSettled([
+      this.fetchSherpaReleaseCatalog(query),
+      this.fetchHuggingFaceCatalog(query),
+      this.fetchWhisperCppCatalog(query),
+    ])
+
+    const result: RemoteCatalogModel[] = []
+    if (sherpa.status === "fulfilled") result.push(...sherpa.value)
+    if (huggingFace.status === "fulfilled") result.push(...huggingFace.value)
+    if (whisperCpp.status === "fulfilled") result.push(...whisperCpp.value)
+
+    const seen = new Set<string>()
+    const deduped = result.filter((model) => {
+      const key = `${model.source}:${model.displayName}`.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+
+    if (deduped.length === 0) {
+      const reasons = [sherpa, huggingFace, whisperCpp]
+        .filter((entry): entry is PromiseRejectedResult => entry.status === "rejected")
+        .map((entry) => String(entry.reason))
+        .join(" · ")
+      if (reasons) throw new Error(reasons)
+    }
+
+    const rank = (model: RemoteCatalogModel) => {
+      if (model.downloadMode === "test" && model.compatibility === "native-likely") return 0
+      if (model.downloadMode === "test") return 1
+      if (model.runtime === "whisper.cpp") return 2
+      return 3
+    }
+
+    return deduped
+      .sort((a, b) => rank(a) - rank(b) || a.displayName.localeCompare(b.displayName))
+      .slice(0, 80)
+  }
+
   private async downloadDirectFiles(
     files: DirectModelFile[],
     destination: string,
