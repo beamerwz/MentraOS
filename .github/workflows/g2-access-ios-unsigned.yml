@@ -12,6 +12,7 @@ on:
       - g2-labs-3.1.3-search-v2
       - g2-labs-3.1.4-integrated-ui-library
       - g2-labs-3.1.5-polish-models-captions
+      - g2-labs-3.1.7-ultra-low-latency
     paths:
       - "mobile/**"
       - ".github/workflows/g2-access-ios-unsigned.yml"

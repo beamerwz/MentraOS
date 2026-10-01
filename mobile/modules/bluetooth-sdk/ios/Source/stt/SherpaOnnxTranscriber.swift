@@ -6,6 +6,14 @@ import UIKit
 /// so a dead pipeline can be localized without needing Xcode logs.
 final class G2LabDiagnostics {
     private static let lock = NSLock()
+    // Hot-path trace strings used to cross the React Native bridge for every
+    // LC3/PCM/decode event. Keep the counters live, but keep bridge logging off
+    // in production latency tests so tracing cannot become part of the latency.
+    private static let traceLoggingEnabled = false
+
+    static func trace(_ message: @autoclosure () -> String) {
+        if traceLoggingEnabled { Bridge.log(message()) }
+    }
 
     private static var lastLc3Ms: Double = -1
     private static var lastPcmMs: Double = -1
@@ -379,7 +387,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
     // with far less per-chunk decoder overhead.
     private static let MAX_CATCHUP_BATCH_MS: Double = 80.0
 
-    private let pcmQueue = DispatchQueue(label: "com.augmentos.sherpaonnx.pcmQueue", qos: .userInteractive)
+    private let pcmLock = NSLock()
     private let pcmAvailable = DispatchSemaphore(value: 0)
     private var pcmBuffers = [Data]()
     private var isRunning = false
@@ -682,16 +690,15 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
     private func handleTranscriptionResult(text: String, isFinal: Bool) {
         let g2TraceResultNs = DispatchTime.now().uptimeNanoseconds
         G2LabDiagnostics.markTranscript(ns: g2TraceResultNs)
-        Bridge.log("G2LAB_TRACE T3_SHERPA_RESULT ns=\(g2TraceResultNs) final=\(isFinal) chars=\(text.count) text=\(text.debugDescription)")
-        // Forward to delegate if set. Measure main-queue handoff separately.
-        DispatchQueue.main.async { [weak self] in
-            let g2TraceMainNs = DispatchTime.now().uptimeNanoseconds
-            Bridge.log("G2LAB_TRACE T4_MAIN_STT_CALLBACK ns=\(g2TraceMainNs) queueMs=\(String(format: "%.3f", Double(g2TraceMainNs - g2TraceResultNs) / 1_000_000.0)) final=\(isFinal)")
-            if isFinal {
-                STTTools.didReceiveFinalTranscription(text)
-            } else {
-                STTTools.didReceivePartialTranscription(text)
-            }
+        G2LabDiagnostics.trace("G2LAB_TRACE T3_SHERPA_RESULT ns=\(g2TraceResultNs) final=\(isFinal) chars=\(text.count) text=\(text.debugDescription)")
+
+        // Build the transcription payload on the inference queue. Bridge itself
+        // performs the one required main-thread hop for React Native event sinks.
+        // This keeps formatting and UserDefaults reads off the UI queue.
+        if isFinal {
+            STTTools.didReceiveFinalTranscription(text)
+        } else {
+            STTTools.didReceivePartialTranscription(text)
         }
     }
 
@@ -711,27 +718,30 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
     }
 
     private func queueAudioData(_ pcm16le: Data) {
-        pcmQueue.async { [weak self] in
-            guard let self = self else { return }
+        let g2TraceQueueNs = DispatchTime.now().uptimeNanoseconds
+        let g2TraceSamples = pcm16le.count / MemoryLayout<Int16>.size
+        let g2TraceAudioMs = Double(g2TraceSamples) * 1000.0 / Double(Self.SAMPLE_RATE)
 
-            let queueSizeBefore = self.pcmBuffers.count
-            self.pcmBuffers.append(pcm16le)
-            if queueSizeBefore == 0 {
-                self.pcmAvailable.signal()
-            }
-            let g2TraceQueueNs = DispatchTime.now().uptimeNanoseconds
-            let g2TraceSamples = pcm16le.count / MemoryLayout<Int16>.size
-            let g2TraceAudioMs = Double(g2TraceSamples) * 1000.0 / Double(Self.SAMPLE_RATE)
-            self.lastQueuedAudioMs = g2TraceAudioMs
-            G2LabDiagnostics.markQueue(depth: self.pcmBuffers.count, audioMs: g2TraceAudioMs)
-            Bridge.log("G2LAB_TRACE STT_QUEUE ns=\(g2TraceQueueNs) depthBefore=\(queueSizeBefore) depthAfter=\(self.pcmBuffers.count) bytes=\(pcm16le.count) audioMs=\(String(format: "%.2f", g2TraceAudioMs))")
+        // This critical section is intentionally tiny. The old path first async'd
+        // onto a serial queue, then the decoder sync'd back onto that same queue.
+        // A lock avoids both scheduler handoffs without blocking inference work.
+        pcmLock.lock()
+        let queueSizeBefore = pcmBuffers.count
+        pcmBuffers.append(pcm16le)
+        if pcmBuffers.count > Self.QUEUE_CAPACITY {
+            let removedBuffer = pcmBuffers.removeFirst()
+            G2LabDiagnostics.markQueueDrop()
+            Bridge.log("⚠️ Audio queue overflow - dropped buffer of \(removedBuffer.count) bytes")
+        }
+        let queueSizeAfter = pcmBuffers.count
+        lastQueuedAudioMs = g2TraceAudioMs
+        pcmLock.unlock()
 
-            // Keep queue size manageable
-            if self.pcmBuffers.count > Self.QUEUE_CAPACITY {
-                let removedBuffer = self.pcmBuffers.removeFirst()
-                G2LabDiagnostics.markQueueDrop()
-                Bridge.log("⚠️ Audio queue overflow - dropped buffer of \(removedBuffer.count) bytes")
-            }
+        G2LabDiagnostics.markQueue(depth: queueSizeAfter, audioMs: g2TraceAudioMs)
+        G2LabDiagnostics.trace("G2LAB_TRACE STT_QUEUE ns=\(g2TraceQueueNs) depthBefore=\(queueSizeBefore) depthAfter=\(queueSizeAfter) bytes=\(pcm16le.count) audioMs=\(String(format: "%.2f", g2TraceAudioMs))")
+
+        if queueSizeBefore == 0 {
+            pcmAvailable.signal()
         }
     }
 
@@ -774,12 +784,11 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
             var batchChunks = 0
             var remainingDepth = 0
 
-            pcmQueue.sync {
-                guard !self.pcmBuffers.isEmpty else { return }
-
+            pcmLock.lock()
+            if !pcmBuffers.isEmpty {
                 var merged = Data()
-                while !self.pcmBuffers.isEmpty {
-                    let next = self.pcmBuffers.removeFirst()
+                while !pcmBuffers.isEmpty {
+                    let next = pcmBuffers.removeFirst()
                     let samples = next.count / MemoryLayout<Int16>.size
                     let nextMs = Double(samples) * 1000.0 / Double(Self.SAMPLE_RATE)
 
@@ -787,13 +796,14 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     batchAudioMs += nextMs
                     batchChunks += 1
 
-                    if self.pcmBuffers.isEmpty || batchAudioMs >= Self.MAX_CATCHUP_BATCH_MS {
+                    if pcmBuffers.isEmpty || batchAudioMs >= Self.MAX_CATCHUP_BATCH_MS {
                         break
                     }
                 }
                 audioData = merged
-                remainingDepth = self.pcmBuffers.count
+                remainingDepth = pcmBuffers.count
             }
+            pcmLock.unlock()
 
             // If batching left queued PCM behind, schedule the next drain
             // immediately without waiting for another producer signal.
@@ -807,7 +817,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     audioMs: max(self.lastQueuedAudioMs, 0)
                 )
                 let g2TraceDecodeStartNs = DispatchTime.now().uptimeNanoseconds
-                Bridge.log("G2LAB_TRACE STT_DECODE_START ns=\(g2TraceDecodeStartNs) bytes=\(data.count) chunks=\(batchChunks) audioMs=\(String(format: "%.2f", batchAudioMs))")
+                G2LabDiagnostics.trace("G2LAB_TRACE STT_DECODE_START ns=\(g2TraceDecodeStartNs) bytes=\(data.count) chunks=\(batchChunks) audioMs=\(String(format: "%.2f", batchAudioMs))")
                 // Synchronize access to recognizer to prevent race conditions
                 objc_sync_enter(self)
                 defer { objc_sync_exit(self) }
@@ -824,11 +834,29 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     // Pass audio data to the Sherpa-ONNX stream
                     try recognizer.acceptWaveform(samples: floatBuf, sampleRate: Self.SAMPLE_RATE)
 
-                    // Decode continuously while model is ready
+                    // Decode continuously while model is ready. Check for a
+                    // changed hypothesis after EACH native pass rather than only
+                    // after the entire ready-loop drains. Multi-pass batches can
+                    // therefore put useful text on the G2 display earlier.
                     var decodeCount = 0
                     while try recognizer.isReady() {
                         try recognizer.decode()
                         decodeCount += 1
+
+                        let result = recognizer.getResult()
+                        let partial = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if partial != lastPartialResult, !partial.isEmpty {
+                            let g2TracePartialNs = DispatchTime.now().uptimeNanoseconds
+                            let g2TraceDecodeMs = Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0
+                            G2LabDiagnostics.markPartial(
+                                ns: g2TracePartialNs,
+                                decodeMs: g2TraceDecodeMs,
+                                audioMs: batchAudioMs
+                            )
+                            G2LabDiagnostics.trace("G2LAB_TRACE CHANGED_PARTIAL ns=\(g2TracePartialNs) pass=\(decodeCount) decodeMs=\(String(format: "%.3f", g2TraceDecodeMs)) chars=\(partial.count)")
+                            handleTranscriptionResult(text: partial, isFinal: false)
+                            lastPartialResult = partial
+                        }
                     }
 
                     if decodeCount > 0 {
@@ -840,7 +868,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                             decodeMs: g2TraceDecodeMs,
                             audioMs: batchAudioMs
                         )
-                        Bridge.log("G2LAB_TRACE STT_DECODE_DONE ns=\(g2TraceDecodeDoneNs) passes=\(decodeCount) decodeMs=\(String(format: "%.3f", g2TraceDecodeMs))")
+                        G2LabDiagnostics.trace("G2LAB_TRACE STT_DECODE_DONE ns=\(g2TraceDecodeDoneNs) passes=\(decodeCount) decodeMs=\(String(format: "%.3f", g2TraceDecodeMs))")
                     }
 
                     // If utterance endpoint detected
@@ -849,7 +877,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                         G2LabDiagnostics.markEndpoint(ns: endpointNs)
                         let result = recognizer.getResult()
                         let finalText = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        Bridge.log("G2LAB_TRACE ENDPOINT ns=\(endpointNs) finalChars=\(finalText.count)")
+                        G2LabDiagnostics.trace("G2LAB_TRACE ENDPOINT ns=\(endpointNs) finalChars=\(finalText.count)")
 
                         if !finalText.isEmpty {
                             handleTranscriptionResult(text: finalText, isFinal: true)
@@ -857,19 +885,6 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
 
                         try recognizer.reset() // Start new utterance
                         lastPartialResult = ""
-                    } else {
-                        // Emit partial results if changed
-                        let result = recognizer.getResult()
-                        let partial = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                        if partial != lastPartialResult, !partial.isEmpty {
-                            let g2TracePartialNs = DispatchTime.now().uptimeNanoseconds
-                            let g2TraceDecodeMs = Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0
-                            G2LabDiagnostics.markPartial(ns: g2TracePartialNs, decodeMs: g2TraceDecodeMs, audioMs: batchAudioMs)
-                            Bridge.log("G2LAB_TRACE FIRST_CHANGED_PARTIAL ns=\(g2TracePartialNs) decodeMs=\(String(format: "%.3f", Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0)) chars=\(partial.count)")
-                            handleTranscriptionResult(text: partial, isFinal: false)
-                            lastPartialResult = partial
-                        }
                     }
                 } catch {
                     let message = error.localizedDescription
@@ -933,13 +948,13 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
         }
 
         // Clear any remaining audio buffers
-        pcmQueue.sync {
-            let remainingBuffers = self.pcmBuffers.count
-            if remainingBuffers > 0 {
-                Bridge.log("🗑️ Clearing \(remainingBuffers) remaining audio buffers")
-            }
-            self.pcmBuffers.removeAll()
+        pcmLock.lock()
+        let remainingBuffers = pcmBuffers.count
+        if remainingBuffers > 0 {
+            Bridge.log("🗑️ Clearing \(remainingBuffers) remaining audio buffers")
         }
+        pcmBuffers.removeAll()
+        pcmLock.unlock()
 
         Bridge.log("✅ SherpaOnnxTranscriber shutdown complete")
     }
