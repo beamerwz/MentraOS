@@ -1641,10 +1641,9 @@ class LocalMiniappRuntime {
     let requestedLocationRate: string | null = null
     const forceLocalTranscriptionStreams = new Set<string>()
     const cloudTranscriptionStreams = new Set<string>()
-    // G2 LABS ships Captions as an account-free local miniapp. Never let its
-    // transcription subscription silently depend on cloud auth/connectivity.
-    // Other miniapps retain the normal cloud/forceLocal routing semantics.
-    const forceBundledCaptionsLocal = packageName === "com.mentra.captions"
+    // Respect the miniapp's requested transcription route. Captions can now
+    // choose on-device (forceLocal) or Mentra Cloud just like any other app.
+    // includeCloud=true intentionally enables both routes for fallback/testing.
     const streams = rawStreams?.map((s) => {
       if (typeof s === "object" && s !== null) {
         if (s.stream === "location_stream") {
@@ -1654,18 +1653,17 @@ class LocalMiniappRuntime {
           return "location_update"
         }
         if (s.stream.startsWith("transcription:")) {
-          if (s.forceLocal === true || forceBundledCaptionsLocal) {
+          if (s.forceLocal === true) {
             forceLocalTranscriptionStreams.add(s.stream)
           }
-          if ((!forceBundledCaptionsLocal && s.forceLocal !== true) || s.includeCloud === true) {
+          if (s.forceLocal !== true || s.includeCloud === true) {
             cloudTranscriptionStreams.add(s.stream)
           }
         }
         return s.stream
       }
       if (s.startsWith("transcription:")) {
-        if (forceBundledCaptionsLocal) forceLocalTranscriptionStreams.add(s)
-        else cloudTranscriptionStreams.add(s)
+        cloudTranscriptionStreams.add(s)
       }
       return s
     }) as string[] | undefined
@@ -1678,7 +1676,7 @@ class LocalMiniappRuntime {
     }
 
     console.log(
-      `${LOG_TAG}: SUBSCRIBE from ${packageName}: [${streams.join(", ")}] forceLocalCaptions=${forceBundledCaptionsLocal}`,
+      `${LOG_TAG}: SUBSCRIBE from ${packageName}: [${streams.join(", ")}] localRoutes=${forceLocalTranscriptionStreams.size} cloudRoutes=${cloudTranscriptionStreams.size}`,
     )
 
     // Gate each stream on the permission type its data requires. The manifest
@@ -3542,6 +3540,24 @@ class LocalMiniappRuntime {
         },
       })
     })
+  }
+
+  // ===========================================================================
+  // Host-owned miniapp settings helpers
+  // ===========================================================================
+
+  /**
+   * Read/write a local miniapp's persisted SimpleStorage from trusted host code.
+   * This is intentionally NOT exposed to miniapps themselves; it lets device
+   * affordances such as the G2 on-glasses quick menu keep the bundled Captions
+   * settings in sync without mounting the phone WebView.
+   */
+  public async getMiniappStorageValue(packageName: string, key: string): Promise<unknown | null> {
+    return this.simpleStorage.get(packageName, key)
+  }
+
+  public async setMiniappStorageValue(packageName: string, key: string, value: unknown): Promise<void> {
+    await this.simpleStorage.set(packageName, key, value)
   }
 
   // ===========================================================================

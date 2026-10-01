@@ -30,6 +30,8 @@ import {useAppStatusStore} from "../stores/apps"
 import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
+import g2SpeechQuickMenu from "./G2SpeechQuickMenu"
+import {G2_SPEECH_MENU_PACKAGE} from "./G2SpeechQuickMenuConstants"
 
 let subs: Array<{remove: () => void}> = []
 
@@ -181,6 +183,10 @@ export function startDeviceEventRouter(): void {
   )
   subs.push(
     BluetoothSdk.addListener("touch_event", (event) => {
+      // The G2 Speech quick menu is phone-hosted but rendered/controlled entirely
+      // on the glasses. While it is open, swipe/tap gestures belong to that menu
+      // instead of leaking into whatever miniapp was previously running.
+      if (g2SpeechQuickMenu.handleTouch(event)) return
       localMiniappRuntime.forwardEvent("touch_event", event)
     }),
   )
@@ -220,6 +226,12 @@ export function startDeviceEventRouter(): void {
     BluetoothSdk.addListener("miniapp_selected", (event) => {
       const packageName = event.packageName as string
       if (!packageName) return
+
+      if (packageName === G2_SPEECH_MENU_PACKAGE) {
+        void g2SpeechQuickMenu.open()
+        return
+      }
+
       const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
       if (!app) return
       // Toggle: stop if running, else start.

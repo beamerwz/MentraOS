@@ -20,18 +20,46 @@ import {useGlassesStore} from "../stores/glasses"
 import {createDebouncedPatchFlusher} from "../utils/debouncedPatch"
 import {isGlassesConnected} from "./GlassesReadiness"
 import micStateCoordinator from "./MicStateCoordinator"
+import {
+  G2_SPEECH_MENU_NAME,
+  G2_SPEECH_MENU_PACKAGE,
+  isG2LabsSpeechMenuEnabled,
+} from "./G2SpeechQuickMenuConstants"
 
 /**
  * Change-pushes are debounced (300ms) and merged so a burst of setSetting
  * calls becomes ONE BLE write (wire v2 keeps BLE JSON small and infrequent).
  * The full on-connect/seed pushes stay direct — callers await their ordering.
  */
+const MAX_G2_MENU_ITEMS = 10
+
+function withG2SpeechMenu(
+  settings: Record<string, unknown>,
+  options: {alwaysAdd?: boolean} = {},
+): Record<string, unknown> {
+  if (!isG2LabsSpeechMenuEnabled()) return settings
+  if (!options.alwaysAdd && !Object.prototype.hasOwnProperty.call(settings, "menu_apps")) return settings
+
+  const raw = Array.isArray(settings.menu_apps) ? settings.menu_apps : []
+  const existing = raw
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    .filter((item) => item.packageName !== G2_SPEECH_MENU_PACKAGE)
+
+  return {
+    ...settings,
+    menu_apps: [
+      {packageName: G2_SPEECH_MENU_PACKAGE, name: G2_SPEECH_MENU_NAME, running: false},
+      ...existing,
+    ].slice(0, MAX_G2_MENU_ITEMS),
+  }
+}
+
 const flushBluetoothSettingsPatch = createDebouncedPatchFlusher<Record<string, unknown>>((patch) => {
   // Settings can change while the glasses are disconnected — a native
   // rejection must not surface as an unhandled promise rejection.
   // Apply mic overrides at flush time, not enqueue time: raw PCM can stop
   // during the debounce window and a captured VAD=false would then be stale.
-  const runtimePatch = micStateCoordinator.applyRuntimeOverrides(patch)
+  const runtimePatch = micStateCoordinator.applyRuntimeOverrides(withG2SpeechMenu(patch))
   void Promise.resolve(BluetoothSdk.updateBluetoothSettings(runtimePatch)).catch((error) => {
     console.warn("GlassesSettingsSync: updateBluetoothSettings failed:", error)
   })
@@ -83,7 +111,7 @@ export async function pushAllBluetoothSettings(): Promise<void> {
   // Returns the native write promise so callers can await the seed before the
   // connect handshake replays settings to the glasses (otherwise the handshake
   // can race ahead and replay stale native settings).
-  const settings = useSettingsStore.getState().getBluetoothSettings()
+  const settings = withG2SpeechMenu(useSettingsStore.getState().getBluetoothSettings(), {alwaysAdd: true})
   await BluetoothSdk.updateBluetoothSettings(micStateCoordinator.applyRuntimeOverrides(settings))
 }
 
@@ -96,7 +124,10 @@ export async function pushAllBluetoothSettings(): Promise<void> {
  * with pre-promotion empties (wiping the pairing it had just made).
  */
 export async function pushDeviceSettingsOnConnect(): Promise<void> {
-  const settings = stripPairingIdentity(useSettingsStore.getState().getBluetoothSettings())
+  const settings = withG2SpeechMenu(
+    stripPairingIdentity(useSettingsStore.getState().getBluetoothSettings()),
+    {alwaysAdd: true},
+  )
   await BluetoothSdk.updateBluetoothSettings(micStateCoordinator.applyRuntimeOverrides(settings))
 }
 
