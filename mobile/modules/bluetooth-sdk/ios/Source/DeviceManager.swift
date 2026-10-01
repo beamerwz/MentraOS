@@ -330,7 +330,7 @@ struct ViewState {
 
     /// STT:
     #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
-    private var transcriber: SherpaOnnxTranscriber?
+    private var transcriber: (any LocalSTTTranscriber)?
     #endif
 
     var viewStates: [ViewState] = [
@@ -368,9 +368,13 @@ struct ViewState {
         // Initialize SherpaOnnx Transcriber
         #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
         STTTools.recoverPersistedModelBeforeInitialization()
-        // Sherpa needs model file paths only; it must not depend on UIKit being
-        // ready during this early singleton initialization.
-        transcriber = SherpaOnnxTranscriber()
+        // Select the native runtime from the persisted model metadata.  Both
+        // runtimes consume the exact same G2 PCM stream and emit through STTTools.
+        if STTTools.runtimeForRecognizer() == "whisper.cpp" {
+            transcriber = WhisperCppTranscriber()
+        } else {
+            transcriber = SherpaOnnxTranscriber()
+        }
 
         // Initialize model runtime away from MainActor. Loading a 600+ MB model on
         // the BLE/UI actor stalls G2 notifications and looks exactly like a lost connection.
@@ -1226,6 +1230,13 @@ struct ViewState {
         }
 
         STTTools.stageCandidateForActivation(path, languageCode)
+
+        let candidateRuntime = STTTools.runtimeForModelPath(path)
+        if let existing = transcriber, existing.runtimeId != candidateRuntime {
+            G2LabDiagnostics.markModel(state: "staged-relaunch", path: path)
+            Bridge.log("STT runtime switch staged for clean launch: \(existing.runtimeId) -> \(candidateRuntime)")
+            return true
+        }
 
         guard let transcriber else {
             G2LabDiagnostics.markModel(state: "staged-relaunch", path: path)
