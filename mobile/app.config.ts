@@ -347,7 +347,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             enableCoreLibraryDesugaring: true,
           },
           ios: {
-            deploymentTarget: "15.5", // for react-native-zip-archive
+            deploymentTarget: isG2AccessBuild ? "16.4" : "15.5", // G2 runtime pack
             extraPods: [
               {
                 name: "FirebaseCore",
