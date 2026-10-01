@@ -219,6 +219,7 @@ export default function G2IntegratedCaptions() {
           iconUrl={app.logoUrl}
           onExit={() => router.back()}
           showCapsule={false}
+          g2ModelControl
         />
       </View>
 
@@ -276,7 +277,7 @@ export default function G2IntegratedCaptions() {
                       <ActivityIndicator color="#C4B5FD" />
                     ) : (
                       <RNText style={{color: active ? "#6FE3A5" : PURPLE, fontSize: 11, fontWeight: "900"}}>
-                        {active ? "ACTIVE" : "USE"}
+                        {active ? "ACTIVE" : "SWITCH"}
                       </RNText>
                     )}
                   </Pressable>
@@ -308,7 +309,7 @@ export default function G2IntegratedCaptions() {
                         <ActivityIndicator color="#C4B5FD" />
                       ) : (
                         <RNText style={{color: entry.current ? "#6FE3A5" : PURPLE, fontSize: 11, fontWeight: "900"}}>
-                          {entry.current ? "ACTIVE" : "USE"}
+                          {entry.current ? "ACTIVE" : "SWITCH"}
                         </RNText>
                       )}
                     </Pressable>
