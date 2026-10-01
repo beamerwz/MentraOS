@@ -567,10 +567,17 @@ class STTModelManager {
       const metadata = await this.readModelMetadata(modelPath)
       if (!metadata) continue
       if (!(await this.directoryHasModelPayload(modelPath))) continue
+      const blockedReason = this.nativeSafetyBlock(
+        metadata.id,
+        metadata.displayName,
+        metadata.sourceUrl,
+        modelPath,
+      )
       const runnable =
-        metadata.runtime === "sherpa-onnx"
+        blockedReason == null &&
+        (metadata.runtime === "sherpa-onnx"
           ? await BluetoothSdk.validateSttModel(modelPath)
-          : metadata.runnable === true
+          : metadata.runnable === true)
       entries.push({
         id: metadata.id ?? this.safeCatalogId(modelPath),
         displayName: metadata.displayName ?? modelPath.split("/").pop() ?? "Downloaded model",
@@ -582,6 +589,7 @@ class STTModelManager {
         runnable,
         current: currentPath === modelPath,
         installedAt: metadata.installedAt,
+        blockedReason,
       })
     }
     return entries.sort((a, b) => (b.installedAt ?? "").localeCompare(a.installedAt ?? ""))
@@ -594,6 +602,8 @@ class STTModelManager {
     if (runtime !== "sherpa-onnx") {
       throw new Error(`${runtime} runtime adapter is not installed yet`)
     }
+    const blockedReason = this.nativeSafetyBlock(metadata.id, metadata.displayName, metadata.sourceUrl, modelPath)
+    if (blockedReason) throw new Error(blockedReason)
     if (!(await BluetoothSdk.validateSttModel(modelPath))) {
       throw new Error("Downloaded Sherpa model is no longer valid")
     }
@@ -1285,8 +1295,9 @@ class STTModelManager {
       )
     }
 
+    const protectedResults = result.map((model) => this.applyNativeSafetyPolicy(model))
     const seen = new Set<string>()
-    const deduped = result.filter((model) => {
+    const deduped = protectedResults.filter((model) => {
       const key = model.displayName.toLowerCase()
       if (seen.has(key)) return false
       seen.add(key)
@@ -1360,6 +1371,14 @@ class STTModelManager {
     model: RemoteCatalogModel,
     onProgress?: (progress: DownloadProgress) => void,
   ): Promise<ModelActivationResult> {
+    const blockedReason = model.blockedReason ?? this.nativeSafetyBlock(
+      model.id,
+      model.displayName,
+      model.fileName,
+      model.sourceUrl,
+      model.downloadUrl,
+    )
+    if (blockedReason) throw new Error(blockedReason)
     if (model.downloadMode !== "test") {
       throw new Error(`${model.runtime} runtime is not installed yet. Use Download to Library instead.`)
     }
