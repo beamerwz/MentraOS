@@ -429,10 +429,16 @@ class STTModelManager {
 
   async listInstalledModels(): Promise<InstalledModelEntry[]> {
     const currentPath = await BluetoothSdk.getSttModelPath()
-    const root = this.getLibraryDirectory()
-    if (!(await RNFS.exists(root))) return []
+    const roots = [
+      this.getLibraryDirectory(),
+      `${this.getModelDirectory()}/custom`,
+      `${this.getModelDirectory()}/quarantine`,
+    ]
 
-    const dirs = await this.findMetadataDirectories(root)
+    const dirs: string[] = []
+    for (const root of roots) {
+      dirs.push(...(await this.findMetadataDirectories(root)))
+    }
     const entries: InstalledModelEntry[] = []
     for (const modelPath of dirs) {
       const metadata = await this.readModelMetadata(modelPath)
@@ -473,9 +479,13 @@ class STTModelManager {
   }
 
   async deleteInstalledModel(modelPath: string): Promise<void> {
-    const libraryRoot = this.getLibraryDirectory()
-    if (!modelPath.startsWith(`${libraryRoot}/`)) {
-      throw new Error("Only downloaded library models can be deleted here")
+    const modelRoot = this.getModelDirectory()
+    const allowed =
+      modelPath.startsWith(`${this.getLibraryDirectory()}/`) ||
+      modelPath.startsWith(`${modelRoot}/custom`) ||
+      modelPath.startsWith(`${modelRoot}/quarantine/`)
+    if (!allowed) {
+      throw new Error("Only custom/downloaded models can be deleted here")
     }
 
     const currentPath = await BluetoothSdk.getSttModelPath()
