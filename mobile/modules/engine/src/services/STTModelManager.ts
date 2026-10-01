@@ -78,6 +78,9 @@ export interface ModelSourceLink {
   detail: string
 }
 
+export type ModelActivationResult = "active" | "staged-relaunch"
+export type ModelDeleteResult = {deferred: boolean}
+
 export interface LanguageConfig {
   code: string
   displayName: string
@@ -95,11 +98,13 @@ export interface LanguageConfig {
 const DEFAULT_LANGUAGE = "en"
 const NEMOTRON_MARKER = ".g2labs-nemotron-v2"
 const CUSTOM_METADATA = ".g2labs-model.json"
+const PROCESS_STARTED_AT = Date.now()
 
 class STTModelManager {
   private static instance: STTModelManager
   private downloadJobId?: number
   private currentLanguage = DEFAULT_LANGUAGE
+  private processLoadedModelPath?: string
   private modelBaseUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
 
   private readonly modelSourceLinks: ModelSourceLink[] = [
@@ -409,6 +414,112 @@ class STTModelManager {
     return `${this.getModelDirectory()}/library`
   }
 
+  private getPendingDeletesPath(): string {
+    return `${this.getModelDirectory()}/.pending-model-deletes.json`
+  }
+
+  private async getProcessLoadedModelPath(): Promise<string> {
+    if (this.processLoadedModelPath !== undefined) return this.processLoadedModelPath
+    this.processLoadedModelPath = await BluetoothSdk.getSttModelPath()
+    return this.processLoadedModelPath
+  }
+
+  private async stageModelPath(path: string, languageCode: string): Promise<ModelActivationResult> {
+    // Snapshot the model this process actually booted with before changing the
+    // persisted selection. Deletion logic uses this to avoid unlinking a model
+    // whose files are still mapped by the live recognizer.
+    await this.getProcessLoadedModelPath()
+
+    if (Platform.OS === "ios") {
+      const staged = await BluetoothSdk.stageSttModel(path, languageCode)
+      if (!staged) throw new Error("Model could not be staged safely")
+      return "staged-relaunch"
+    }
+
+    const activated = await BluetoothSdk.activateSttModel(path, languageCode)
+    if (!activated) throw new Error("Model activation failed")
+    return "active"
+  }
+
+  private modelSlotRoot(modelPath: string): string {
+    const roots = [
+      this.getLibraryDirectory(),
+      `${this.getModelDirectory()}/custom`,
+      `${this.getModelDirectory()}/quarantine`,
+    ]
+
+    for (const root of roots) {
+      if (modelPath === root) return root
+      if (!modelPath.startsWith(`${root}/`)) continue
+      const relative = modelPath.slice(root.length + 1)
+      const first = relative.split("/")[0]
+      return first ? `${root}/${first}` : modelPath
+    }
+    return modelPath
+  }
+
+  private async readPendingDeletes(): Promise<Array<{root: string; queuedAt: number}>> {
+    const marker = this.getPendingDeletesPath()
+    try {
+      if (!(await RNFS.exists(marker))) return []
+      const parsed = JSON.parse(await RNFS.readFile(marker, "utf8"))
+      if (!Array.isArray(parsed)) return []
+      return parsed.filter(
+        (entry): entry is {root: string; queuedAt: number} =>
+          !!entry && typeof entry.root === "string" && typeof entry.queuedAt === "number",
+      )
+    } catch {
+      return []
+    }
+  }
+
+  private async writePendingDeletes(items: Array<{root: string; queuedAt: number}>): Promise<void> {
+    const marker = this.getPendingDeletesPath()
+    await RNFS.mkdir(this.getModelDirectory(), {NSURLIsExcludedFromBackupKey: true})
+    if (items.length === 0) {
+      if (await RNFS.exists(marker)) await RNFS.unlink(marker)
+      return
+    }
+    await RNFS.writeFile(marker, JSON.stringify(items), "utf8")
+  }
+
+  private async queueDeleteAfterRelaunch(root: string): Promise<void> {
+    const pending = await this.readPendingDeletes()
+    if (!pending.some((entry) => entry.root === root)) {
+      pending.push({root, queuedAt: Date.now()})
+      await this.writePendingDeletes(pending)
+    }
+  }
+
+  private async cleanupPendingDeletes(): Promise<void> {
+    const pending = await this.readPendingDeletes()
+    if (pending.length === 0) return
+
+    const loadedPath = await this.getProcessLoadedModelPath()
+    const keep: Array<{root: string; queuedAt: number}> = []
+
+    for (const entry of pending) {
+      // Never delete in the same process that queued the request. A live ORT
+      // recognizer may still mmap/read those files even though another model
+      // has already been staged in UserDefaults.
+      if (entry.queuedAt >= PROCESS_STARTED_AT) {
+        keep.push(entry)
+        continue
+      }
+      if (loadedPath === entry.root || loadedPath.startsWith(`${entry.root}/`)) {
+        keep.push(entry)
+        continue
+      }
+      try {
+        if (await RNFS.exists(entry.root)) await RNFS.unlink(entry.root)
+      } catch {
+        keep.push(entry)
+      }
+    }
+
+    await this.writePendingDeletes(keep)
+  }
+
   private async findMetadataDirectories(root: string, depth = 0): Promise<string[]> {
     if (!(await RNFS.exists(root)) || depth > 3) return []
     const result: string[] = []
@@ -436,7 +547,9 @@ class STTModelManager {
   }
 
   async listInstalledModels(): Promise<InstalledModelEntry[]> {
+    await this.cleanupPendingDeletes()
     const currentPath = await BluetoothSdk.getSttModelPath()
+    await this.getProcessLoadedModelPath()
     const roots = [
       this.getLibraryDirectory(),
       `${this.getModelDirectory()}/custom`,
@@ -472,7 +585,7 @@ class STTModelManager {
     return entries.sort((a, b) => (b.installedAt ?? "").localeCompare(a.installedAt ?? ""))
   }
 
-  async activateInstalledModel(modelPath: string): Promise<void> {
+  async activateInstalledModel(modelPath: string): Promise<ModelActivationResult> {
     const metadata = await this.readModelMetadata(modelPath)
     if (!metadata) throw new Error("Model metadata is missing")
     const runtime = metadata.runtime ?? "unknown"
@@ -482,12 +595,12 @@ class STTModelManager {
     if (!(await BluetoothSdk.validateSttModel(modelPath))) {
       throw new Error("Downloaded Sherpa model is no longer valid")
     }
-    const activated = await BluetoothSdk.activateSttModel(modelPath, metadata.languageCode ?? "it-IT")
-    if (!activated) throw new Error("Downloaded model failed its native recognizer smoke test")
+    const result = await this.stageModelPath(modelPath, metadata.languageCode ?? "it-IT")
     this.currentLanguage = "custom"
+    return result
   }
 
-  async deleteInstalledModel(modelPath: string): Promise<void> {
+  async deleteInstalledModel(modelPath: string): Promise<ModelDeleteResult> {
     const modelRoot = this.getModelDirectory()
     const allowed =
       modelPath.startsWith(`${this.getLibraryDirectory()}/`) ||
@@ -497,13 +610,23 @@ class STTModelManager {
       throw new Error("Only custom/downloaded models can be deleted here")
     }
 
+    const deleteRoot = this.modelSlotRoot(modelPath)
     const currentPath = await BluetoothSdk.getSttModelPath()
-    if (currentPath === modelPath) {
+    const loadedPath = await this.getProcessLoadedModelPath()
+    const selectedHere = currentPath === deleteRoot || currentPath.startsWith(`${deleteRoot}/`)
+    const loadedHere = loadedPath === deleteRoot || loadedPath.startsWith(`${deleteRoot}/`)
+
+    if (selectedHere || loadedHere) {
       if (!(await this.isModelAvailable("it"))) await this.downloadModel("it")
-      await this.activateLanguage("it")
+      await this.stageModelPath(this.getModelPath("it"), this.languages.it.languageCode)
+      this.currentLanguage = "it"
+      await this.queueDeleteAfterRelaunch(deleteRoot)
+      return {deferred: true}
     }
 
-    if (await RNFS.exists(modelPath)) await RNFS.unlink(modelPath)
+    if (await RNFS.exists(deleteRoot)) await RNFS.unlink(deleteRoot)
+    if (await RNFS.exists(deleteRoot)) throw new Error("Model folder could not be removed")
+    return {deferred: false}
   }
 
   getCurrentLanguage(): string {
@@ -790,7 +913,7 @@ class STTModelManager {
     sourcePath: string,
     languageCode = "it-IT",
     displayName = "Custom Sherpa model",
-  ): Promise<void> {
+  ): Promise<ModelActivationResult> {
     const safeName = this.safeCatalogId(displayName.replace(/\.tar\.bz2$/i, ""))
     const destination = `${this.getLibraryDirectory()}/import-${safeName}-${Date.now()}`
     await RNFS.mkdir(this.getLibraryDirectory(), {NSURLIsExcludedFromBackupKey: true})
@@ -813,21 +936,22 @@ class STTModelManager {
         languageCode,
         runnable: true,
       })
-      const activated = await BluetoothSdk.activateSttModel(modelPath, languageCode)
-      if (!activated) throw new Error("Custom model failed its native recognizer smoke test")
+      const result = await this.stageModelPath(modelPath, languageCode)
       this.currentLanguage = "custom"
+      return result
     } catch (error) {
       await RNFS.unlink(destination).catch(() => undefined)
       throw error
     }
   }
 
-  async activateCustomModel(languageCode = "it-IT"): Promise<void> {
+  async activateCustomModel(languageCode = "it-IT"): Promise<ModelActivationResult> {
     const installed = await this.listInstalledModels()
     const candidate = installed.find((model) => model.runtime === "sherpa-onnx" && model.runnable)
     if (!candidate) throw new Error("No valid downloaded Sherpa model is installed")
-    await this.activateInstalledModel(candidate.path)
+    const result = await this.activateInstalledModel(candidate.path)
     this.currentLanguage = "custom"
+    return result
   }
 
   getModelSourceLinks(): ModelSourceLink[] {
@@ -1202,7 +1326,7 @@ class STTModelManager {
   async downloadAndTestCatalogModel(
     model: RemoteCatalogModel,
     onProgress?: (progress: DownloadProgress) => void,
-  ): Promise<void> {
+  ): Promise<ModelActivationResult> {
     if (model.downloadMode !== "test") {
       throw new Error(`${model.runtime} runtime is not installed yet. Use Download to Library instead.`)
     }
@@ -1264,13 +1388,12 @@ class STTModelManager {
         languageCode: model.languageCode,
         runnable: true,
       })
-      const activated = await BluetoothSdk.activateSttModel(modelPath, model.languageCode)
-      if (!activated) {
-        throw new Error(
-          "QUARANTINED: native smoke test failed. Last-known-good model remains the rollback target.",
-        )
-      }
+      // Structural validation above is safe. On iOS we never construct a
+      // second/new ORT recognizer in this live process; stage the model and let
+      // the clean-launch crash guard perform the risky construction.
+      const result = await this.stageModelPath(modelPath, model.languageCode)
       this.currentLanguage = "custom"
+      return result
     } catch (error) {
       this.downloadJobId = undefined
       await RNFS.unlink(installRoot).catch(() => undefined)
@@ -1339,7 +1462,7 @@ class STTModelManager {
     }
   }
 
-  async deleteModel(code?: string): Promise<void> {
+  async deleteModel(code?: string): Promise<ModelDeleteResult> {
     const id = code || this.currentLanguage
     if (id === "it") {
       throw new Error("Italian Built-in is the G2 LABS recovery model and cannot be deleted.")
@@ -1348,16 +1471,25 @@ class STTModelManager {
 
     const modelPath = this.getModelPath(id)
     const currentPath = await BluetoothSdk.getSttModelPath()
-    if (currentPath === modelPath) {
+    const loadedPath = await this.getProcessLoadedModelPath()
+    const selectedHere = currentPath === modelPath
+    const loadedHere = loadedPath === modelPath
+
+    if (selectedHere || loadedHere) {
       if (!(await this.isModelAvailable("it"))) await this.downloadModel("it")
-      await this.activateLanguage("it")
+      await this.stageModelPath(this.getModelPath("it"), this.languages.it.languageCode)
+      this.currentLanguage = "it"
+      await this.queueDeleteAfterRelaunch(modelPath)
+      return {deferred: true}
     }
 
     if (await RNFS.exists(modelPath)) await RNFS.unlink(modelPath)
+    if (await RNFS.exists(modelPath)) throw new Error("Model folder could not be removed")
     if (this.currentLanguage === id) this.currentLanguage = "it"
+    return {deferred: false}
   }
 
-  async activateLanguage(code: string): Promise<void> {
+  async activateLanguage(code: string): Promise<ModelActivationResult> {
     const language = this.languages[code]
     if (!language) {
       throw new Error(`Language ${code} not found`)
@@ -1369,12 +1501,9 @@ class STTModelManager {
     }
 
     const modelPath = this.getModelPath(code)
-    const activated = await BluetoothSdk.activateSttModel(modelPath, language.languageCode)
-    if (!activated) {
-      this.currentLanguage = "it"
-      throw new Error(`${language.displayName} failed its native recognizer smoke test; restored Italian Built-in`)
-    }
+    const result = await this.stageModelPath(modelPath, language.languageCode)
     this.currentLanguage = code
+    return result
   }
 
   async getStorageInfo(): Promise<{free: number; total: number}> {
