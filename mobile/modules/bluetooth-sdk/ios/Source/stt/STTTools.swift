@@ -206,6 +206,11 @@ class STTTools {
         defaults.synchronize()
     }
 
+    private static func isKnownUnsafePersistedModel(_ path: String) -> Bool {
+        let value = path.lowercased()
+        return value.contains("nemo-fast-conformer") && value.contains("transducer")
+    }
+
     private static func restoreLastKnownGood(reason: String) -> Bool {
         let defaults = UserDefaults.standard
         let path = defaults.string(forKey: lastGoodPathKey) ?? ""
@@ -245,6 +250,15 @@ class STTTools {
         // bad model, so do not falsely roll it back.
 
         guard let modelPath = defaults.string(forKey: "STTModelPath") else { return }
+
+        // 3.1.7 could clear the candidate guard after startup smoke testing even
+        // though this model family later corrupts memory in the real decoder.
+        // Recover immediately on upgrade before ORT ever sees it again.
+        if isKnownUnsafePersistedModel(modelPath) {
+            _ = restoreLastKnownGood(reason: "blocked NeMo FastConformer Transducer on iOS after reproduced decoder heap corruption")
+            return
+        }
+
         if !validateSTTModel(modelPath) {
             _ = restoreLastKnownGood(reason: "persisted STT model is incomplete")
         }
