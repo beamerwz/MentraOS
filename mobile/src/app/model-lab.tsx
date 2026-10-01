@@ -396,9 +396,16 @@ export default function G2ModelLab() {
         setStatus(`INSTALLED + SELECTED · ${model.displayName}`)
       } else {
         setStatus(`Downloading ${model.displayName}…`)
-        await STT.downloadCatalogModelToLibrary(model, (p) => setProgress(p.percentage))
-        await refreshLibrary()
-        setStatus(`DOWNLOADED · ${model.displayName} · waiting for ${model.runtime} runtime adapter`)
+        const installedPath = await STT.downloadCatalogModelToLibrary(model, (p) => setProgress(p.percentage))
+        if (model.runtime === "whisper.cpp") {
+          await STT.activateInstalledModel(installedPath)
+          await refreshModelState()
+          await refreshDiagnostics()
+          setStatus(`INSTALLED + SELECTED · ${model.displayName} · close/reopen once to switch runtime safely`)
+        } else {
+          await refreshLibrary()
+          setStatus(`DOWNLOADED · ${model.displayName}`)
+        }
       }
     } catch (error: any) {
       setStatus(error?.message ?? "Remote model download failed safely")
@@ -577,7 +584,7 @@ export default function G2ModelLab() {
         {downloadedFiles.length > 0 && (
           <>
             <RNText style={{color: "#8F7FA3", fontSize: 11, fontWeight: "900", letterSpacing: 1.2, marginTop: 18, marginBottom: 8}}>
-              DOWNLOADED FILES · RUNTIME NOT INSTALLED
+              LEGACY / INCOMPATIBLE DOWNLOADS
             </RNText>
             <View style={{backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 20, padding: 14}}>
               {downloadedFiles.map((entry, index) => (
@@ -588,7 +595,7 @@ export default function G2ModelLab() {
                     {entry.displayName}
                   </RNText>
                   <RNText style={{color: "#756981", fontSize: 11, marginTop: 4}}>
-                    {entry.runtime} · downloaded only · cannot be selected yet
+                    {entry.runtime} · kept for deletion/source reference · not offered by the curated browser
                   </RNText>
                   <View style={{flexDirection: "row", gap: 8, marginTop: 9}}>
                     {entry.sourceUrl ? (
@@ -729,15 +736,9 @@ export default function G2ModelLab() {
             },
             {
               name: "whisper.cpp",
-              status: "NOT INSTALLED",
-              detail: "Models can be stored in your library now. Native iOS runtime adapter is the next integration step.",
+              status: "INSTALLED",
+              detail: "Native iOS GGML runtime bundled in G2 Glasses. Downloaded .bin Whisper models can be selected.",
               source: "https://github.com/ggml-org/whisper.cpp",
-            },
-            {
-              name: "Vosk",
-              status: "NOT INSTALLED",
-              detail: "Models are never shown as installed unless the runtime adapter is actually present.",
-              source: "https://alphacephei.com/vosk/",
             },
           ].map((runtime, index) => (
             <View
