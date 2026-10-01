@@ -5,8 +5,8 @@ import mentraAuth from "@/utils/auth/authClient"
 import {cloudConfigValues} from "@/services/cloudClient"
 
 const CAPTIONS_PACKAGE = "com.mentra.captions"
-const CAPTIONS_VERSION = "1.0.18"
-const CAPTIONS_BUNDLE = require("@assets/miniapps/com.mentra.captions-1.0.18.zip")
+const CAPTIONS_VERSION = "1.0.19"
+const CAPTIONS_BUNDLE = require("@assets/miniapps/com.mentra.captions-1.0.19.zip")
 
 /**
  * Install the proven Captions bundle shipped inside the IPA without contacting
