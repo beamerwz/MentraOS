@@ -290,6 +290,35 @@ export default function G2ModelLab() {
     }
   }
 
+  const deletePreset = (code: string, title: string) => {
+    Alert.alert(
+      "Delete downloaded model?",
+      `${title} will be removed from this iPhone. If it is active, G2 Glasses will switch to Italian Built-in first.`,
+      [
+        {text: "Cancel", style: "cancel"},
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => {
+            void (async () => {
+              try {
+                setBusy(`delete-preset:${code}`)
+                await STT.deleteModel(code)
+                await refreshModelState()
+                await refreshDiagnostics()
+                setStatus(`Deleted · ${title}`)
+              } catch (error: any) {
+                setStatus(error?.message ?? "Could not delete downloaded model")
+              } finally {
+                setBusy(null)
+              }
+            })()
+          },
+        },
+      ],
+    )
+  }
+
   const importCustom = async () => {
     try {
       const picked = await DocumentPicker.getDocumentAsync({type: "*/*", copyToCacheDirectory: true})
@@ -505,22 +534,32 @@ export default function G2ModelLab() {
                   <RNText style={{color: "white", fontSize: 15, fontWeight: "800"}}>{item.title}</RNText>
                   <RNText style={{color: "#8F819B", fontSize: 12, marginTop: 3}}>{item.sub}</RNText>
                 </View>
-                <ActionButton
-                  label={
-                    busy === item.code
-                      ? progress > 0
-                        ? `${progress}%`
-                        : "…"
-                      : selected
-                        ? "ACTIVE"
-                        : downloaded
-                          ? "SWITCH"
-                          : "GET"
-                  }
-                  onPress={() => void activate(item.code)}
-                  secondary={selected}
-                  disabled={!!busy || selected}
-                />
+                <View style={{flexDirection: "row", gap: 7, alignItems: "center"}}>
+                  <ActionButton
+                    label={
+                      busy === item.code
+                        ? progress > 0
+                          ? `${progress}%`
+                          : "…"
+                        : selected
+                          ? "ACTIVE"
+                          : downloaded
+                            ? "SWITCH"
+                            : "GET"
+                    }
+                    onPress={() => void activate(item.code)}
+                    secondary={selected}
+                    disabled={!!busy || selected}
+                  />
+                  {downloaded && item.code !== "it" ? (
+                    <ActionButton
+                      label={busy === `delete-preset:${item.code}` ? "DELETING…" : "DELETE"}
+                      danger
+                      onPress={() => deletePreset(item.code, item.title)}
+                      disabled={!!busy}
+                    />
+                  ) : null}
+                </View>
               </View>
             )
           })}
