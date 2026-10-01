@@ -82,12 +82,12 @@ jobs:
             bun run pack
           )
 
-          CAPTIONS_ZIP="$TMP_WORKTREE/miniapps/captions/build/com.mentra.captions-1.0.18.zip"
-          test -f "$CAPTIONS_ZIP" || { echo "::error::Captions 1.0.18 bundle was not produced"; exit 1; }
+          CAPTIONS_ZIP="$TMP_WORKTREE/miniapps/captions/build/com.mentra.captions-1.0.19.zip"
+          test -f "$CAPTIONS_ZIP" || { echo "::error::Captions 1.0.19 bundle was not produced"; exit 1; }
           rm -f mobile/assets/miniapps/com.mentra.captions-*.zip
-          cp "$CAPTIONS_ZIP" mobile/assets/miniapps/com.mentra.captions-1.0.18.zip
+          cp "$CAPTIONS_ZIP" mobile/assets/miniapps/com.mentra.captions-1.0.19.zip
           bun mobile/scripts/generate-bundled-miniapps.mjs
-          ls -lh mobile/assets/miniapps/com.mentra.captions-1.0.18.zip
+          ls -lh mobile/assets/miniapps/com.mentra.captions-1.0.19.zip
 
       - name: Install JavaScript dependencies
         working-directory: mobile
