@@ -843,7 +843,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                         STTTools.armCandidateLiveDecodeIfNeeded()
                         try recognizer.decode()
                         decodeCount += 1
-                        STTTools.markCandidateLiveDecodeSucceeded()
+                        STTTools.markCandidateLiveDecodeReturned()
                     }
 
                     if decodeCount > 0 {
@@ -866,6 +866,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                         Bridge.log("G2LAB_TRACE ENDPOINT ns=\(endpointNs) finalChars=\(finalText.count)")
 
                         if !finalText.isEmpty {
+                            STTTools.markCandidateLiveResultSucceeded()
                             handleTranscriptionResult(text: finalText, isFinal: true)
                         }
 
@@ -877,6 +878,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                         let partial = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
 
                         if partial != lastPartialResult, !partial.isEmpty {
+                            STTTools.markCandidateLiveResultSucceeded()
                             let g2TracePartialNs = DispatchTime.now().uptimeNanoseconds
                             let g2TraceDecodeMs = Double(g2TracePartialNs - g2TraceDecodeStartNs) / 1_000_000.0
                             G2LabDiagnostics.markPartial(ns: g2TracePartialNs, decodeMs: g2TraceDecodeMs, audioMs: batchAudioMs)
