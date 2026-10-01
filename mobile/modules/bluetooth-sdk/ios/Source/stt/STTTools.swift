@@ -36,7 +36,7 @@ class STTTools {
     static func runtimeForModelPath(_ path: String) -> String {
         let metadata = (path as NSString).appendingPathComponent(".g2labs-model.json")
         if let data = FileManager.default.contents(atPath: metadata),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
            let runtime = object["runtime"] as? String,
            !runtime.isEmpty
         {
@@ -71,7 +71,7 @@ class STTTools {
     private static func runtimeMetadataSaysWhisper(_ directory: String) -> Bool {
         let metadata = (directory as NSString).appendingPathComponent(".g2labs-model.json")
         guard let data = FileManager.default.contents(atPath: metadata),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let runtime = object["runtime"] as? String
         else { return false }
         return runtime == "whisper.cpp"
