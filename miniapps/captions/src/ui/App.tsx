@@ -85,24 +85,26 @@ export function App() {
       className={`w-screen h-screen flex overflow-hidden font-sans ${G2_LABS ? "dark g2labs-captions" : ""}`}
       style={{
         backgroundColor: G2_LABS ? "#050208" : presentation.accentColor,
-        paddingTop: insets.top,
+        paddingTop: G2_LABS ? 0 : insets.top,
         paddingBottom: insets.bottom,
         paddingLeft: insets.left,
         paddingRight: insets.right,
       }}>
       <div className={`min-h-0 flex-1 flex flex-col overflow-hidden ${G2_LABS ? "bg-[#050208]" : "bg-zinc-100 dark:bg-zinc-950"}`}>
-        <Header
-          connected={connected}
-          accentColor={presentation.accentColor}
-          accentForeground={presentation.accentForeground}
-          error={error}
-          settings={settings}
-          onUpdateLanguage={updateLanguage}
-          onUpdateHints={updateHints}
-          onToggleLanguageSelector={() => setShowLanguageSelector(true)}
-          onReconnect={reconnect}
-          isLanguageSelectorOpen={showLanguageSelector}
-        />
+        {!G2_LABS && (
+          <Header
+            connected={connected}
+            accentColor={presentation.accentColor}
+            accentForeground={presentation.accentForeground}
+            error={error}
+            settings={settings}
+            onUpdateLanguage={updateLanguage}
+            onUpdateHints={updateHints}
+            onToggleLanguageSelector={() => setShowLanguageSelector(true)}
+            onReconnect={reconnect}
+            isLanguageSelectorOpen={showLanguageSelector}
+          />
+        )}
 
         {/* Main Content Area */}
         <div className="flex-1 overflow-hidden relative">
