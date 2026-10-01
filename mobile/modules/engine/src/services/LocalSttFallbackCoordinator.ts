@@ -43,6 +43,14 @@ class LocalSttFallbackCoordinator {
     // Do not enqueue an asynchronous native "off" write here. This object is
     // constructed very early; a delayed write can otherwise land after the
     // first Captions subscription and silently disable PCM -> Sherpa.
+
+    // G2 can switch the local Captions backend at runtime. Reconcile immediately
+    // so choosing ExecuTorch releases Sherpa's native PCM gate, and switching
+    // back re-arms Sherpa without restarting the phone app.
+    useSettingsStore.subscribe(
+      (state) => state.getSetting("g2_offline_engine"),
+      () => void this.reconcile(),
+    )
   }
 
   /**
@@ -172,14 +180,16 @@ class LocalSttFallbackCoordinator {
   }
 
   private shouldUseLocalStt(): boolean {
-    // G2 LABS is an account-free/offline-first build. A transcription
-    // subscription must always arm the native PCM -> Sherpa path; otherwise a
-    // nominal cloud-connected state leaves should_send_transcript=false AND
-    // local_stt_fallback_active=false, so every decoded glasses PCM frame is
-    // dropped before it reaches Sherpa.
-    //
-    // Cloud delivery can still exist independently, but local Captions must
-    // never depend on cloud auth/connectivity to hear the glasses microphone.
+    // ExecuTorch Whisper is a separate local backend. When selected, the host
+    // React bridge owns raw PCM and publishes its results into the same local
+    // transcription stream, so native Sherpa must stand down completely.
+    if (process.env.EXPO_PUBLIC_G2_LABS === "1") {
+      const engine = String(useSettingsStore.getState().getSetting("g2_offline_engine") ?? "sherpa")
+      if (engine.startsWith("whisper_")) return false
+    }
+
+    // G2 LABS is offline-first. A local transcription subscription otherwise
+    // arms the already-created native Sherpa recognizer.
     return this.hasTranscriptionSubscription
   }
 
