@@ -557,7 +557,8 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     )
 
                     // The first native recognizer construction owns ORT for this process.
-                    // Never tear it down and construct a different model in-process.
+                    // Arm the persisted crash guard immediately before the risky call.
+                    STTTools.beginCandidateConstructionIfNeeded()
                     noteRecognizerCreationAttempt()
                     recognizer = try SherpaOnnxRecognizer(config: &config)
 
@@ -613,7 +614,8 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     )
 
                     // The first native recognizer construction owns ORT for this process.
-                    // Never tear it down and construct a different model in-process.
+                    // Arm the persisted crash guard immediately before the risky call.
+                    STTTools.beginCandidateConstructionIfNeeded()
                     noteRecognizerCreationAttempt()
                     recognizer = try SherpaOnnxRecognizer(config: &config)
 
@@ -652,6 +654,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
             // Run a bounded readiness smoke test before declaring the model live.
             try recognizer?.smokeTest(sampleRate: Self.SAMPLE_RATE)
             try recognizer?.recreateStream()
+            STTTools.markCandidateLoadedAwaitingLiveDecode()
             // recreateStream() replaces the native stream, so reapply Nemotron language.
             if isNemotron, let languageCode = streamLanguage, !languageCode.isEmpty {
                 try recognizer?.setOption(key: "language", value: languageCode)
@@ -661,8 +664,7 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
             startProcessingTask()
 
             G2LabDiagnostics.markModel(state: "ready", path: STTTools.modelPathForRecognizer() ?? "")
-            STTTools.markCurrentModelReady()
-            Bridge.log("Sherpa-ONNX ASR initialized successfully with \(modelType) model")
+            Bridge.log("Sherpa-ONNX ASR initialized successfully with \(modelType) model; candidate guard remains armed until first live decode")
             return true
 
         } catch {
@@ -834,11 +836,14 @@ final class SherpaOnnxTranscriber: @unchecked Sendable {
                     // Pass audio data to the Sherpa-ONNX stream
                     try recognizer.acceptWaveform(samples: floatBuf, sampleRate: Self.SAMPLE_RATE)
 
-                    // Decode continuously while model is ready
+                    // Decode continuously while model is ready. Candidate models
+                    // stay crash-guarded until a real live decode returns.
                     var decodeCount = 0
                     while try recognizer.isReady() {
+                        STTTools.armCandidateLiveDecodeIfNeeded()
                         try recognizer.decode()
                         decodeCount += 1
+                        STTTools.markCandidateLiveDecodeSucceeded()
                     }
 
                     if decodeCount > 0 {
