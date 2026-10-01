@@ -1233,6 +1233,8 @@ export interface BluetoothSdkPublicModule {
 
   // STT Commands (TODO: MOVE TO CRUST)
   setSttModelDetails(path: string, languageCode: string): Promise<void>
+  /** Persist a validated STT model for the next clean launch without constructing ORT in-process. */
+  stageSttModel(path: string, languageCode: string): Promise<boolean>
   activateSttModel(path: string, languageCode: string): Promise<boolean>
   getSttModelPath(): Promise<string>
   checkSttModelAvailable(): Promise<boolean>
