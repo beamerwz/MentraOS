@@ -39,6 +39,43 @@ type QuickCardProps = {
   wide?: boolean
 }
 
+function BatteryGlyph({value}: {value: number | null}) {
+  const safe = value == null ? 0 : Math.max(0, Math.min(100, value))
+  const low = value != null && value <= 20
+  return (
+    <View style={{width: 24, height: 12, flexDirection: "row", alignItems: "center"}}>
+      <View
+        style={{
+          width: 20,
+          height: 11,
+          borderRadius: 3,
+          borderWidth: 1.5,
+          borderColor: value == null ? "#6F6279" : low ? "#FF7B93" : "#79E6A8",
+          padding: 1.5,
+        }}>
+        <View
+          style={{
+            height: "100%",
+            width: `${Math.max(value == null ? 0 : 8, safe)}%`,
+            borderRadius: 1.5,
+            backgroundColor: value == null ? "#3A3040" : low ? "#FF7B93" : "#79E6A8",
+          }}
+        />
+      </View>
+      <View
+        style={{
+          width: 2.5,
+          height: 5,
+          borderTopRightRadius: 2,
+          borderBottomRightRadius: 2,
+          backgroundColor: value == null ? "#6F6279" : low ? "#FF7B93" : "#79E6A8",
+          marginLeft: 1,
+        }}
+      />
+    </View>
+  )
+}
+
 function QuickCard({title, subtitle, icon, onPress, accent = false, wide = false}: QuickCardProps) {
   return (
     <Pressable
@@ -83,6 +120,7 @@ export default function G2LabsHome() {
   const [launchingCaptions, setLaunchingCaptions] = useState(false)
   const [launchMessage, setLaunchMessage] = useState("")
   const [currentModelName, setCurrentModelName] = useState("Loading model…")
+  const [lastKnownCaseBattery, setLastKnownCaseBattery] = useState<number | null>(null)
   const [preferredMic] = useSetting<string>(SETTINGS.preferred_mic.key)
   const hasAttemptedInitialConnect = useRef(false)
 
@@ -94,6 +132,8 @@ export default function G2LabsHome() {
     typeof glassesStatus.case?.battery === "number" && glassesStatus.case.battery >= 0
       ? glassesStatus.case.battery
       : null
+  const displayedCaseBattery = caseBattery ?? lastKnownCaseBattery
+  const caseBatteryIsCached = caseBattery == null && lastKnownCaseBattery != null
 
   const micLabel =
     preferredMic === "glasses"
@@ -104,12 +144,6 @@ export default function G2LabsHome() {
           ? "Bluetooth"
           : "Automatic"
 
-  const batteryEmoji = (value: number | null) => {
-    if (value == null) return "🔋"
-    if (value <= 20) return "🪫"
-    return "🔋"
-  }
-
   useFocusEffect(
     useCallback(() => {
       BgTimer.setTimeout(() => refreshApps(), 250)
@@ -118,6 +152,10 @@ export default function G2LabsHome() {
         .catch(() => setCurrentModelName("Model unavailable"))
     }, [refreshApps]),
   )
+
+  useEffect(() => {
+    if (caseBattery != null) setLastKnownCaseBattery(caseBattery)
+  }, [caseBattery])
 
   useEffect(() => {
     const reconnect = async () => {
@@ -155,7 +193,7 @@ export default function G2LabsHome() {
     }
   }
 
-  const version = Application.nativeApplicationVersion || "3.1.4"
+  const version = Application.nativeApplicationVersion || "3.1.5"
 
   return (
     <Screen
@@ -207,7 +245,7 @@ export default function G2LabsHome() {
                 G2 Glasses
               </RNText>
               <RNText style={{color: "#74677F", fontSize: 11, marginTop: 2, letterSpacing: 1.3}}>
-                G2 LABS · EXPERIMENTAL ENGINE
+                GIACOMO MILANESI’S G2 GLASSES
               </RNText>
             </View>
           </View>
@@ -288,12 +326,12 @@ export default function G2LabsHome() {
               {
                 label: "GLASSES",
                 value: battery === null ? "—" : `${battery}%`,
-                icon: <RNText style={{fontSize: 15}}>{batteryEmoji(battery)}</RNText>,
+                icon: <BatteryGlyph value={battery} />,
               },
               {
-                label: "CASE",
-                value: caseBattery === null ? "—" : `${caseBattery}%`,
-                icon: <RNText style={{fontSize: 15}}>{batteryEmoji(caseBattery)}</RNText>,
+                label: caseBatteryIsCached ? "CASE · LAST" : "CASE",
+                value: displayedCaseBattery === null ? "Not reporting" : `${displayedCaseBattery}%`,
+                icon: <BatteryGlyph value={displayedCaseBattery} />,
               },
             ].map((item) => (
               <View
