@@ -43,25 +43,35 @@ type QuickCardProps = {
 function BatteryGlyph({value}: {value: number | null}) {
   const safe = value == null ? 0 : Math.max(0, Math.min(100, value))
   const low = value != null && value <= 20
+  const stroke = value == null ? "#6F6279" : low ? "#FF7B93" : "#79E6A8"
+  // 15px is the usable interior of the 20px shell. At 100% it fills the
+  // complete interior instead of looking half-empty because of percentage+padding math.
+  const fillWidth = value == null ? 0 : Math.max(1, Math.round((safe / 100) * 15))
   return (
-    <View style={{width: 24, height: 12, flexDirection: "row", alignItems: "center"}}>
+    <View style={{width: 24, height: 12, flexDirection: "row", alignItems: "center", justifyContent: "center"}}>
       <View
         style={{
           width: 20,
           height: 11,
           borderRadius: 3,
           borderWidth: 1.5,
-          borderColor: value == null ? "#6F6279" : low ? "#FF7B93" : "#79E6A8",
-          padding: 1.5,
+          borderColor: stroke,
+          position: "relative",
+          overflow: "hidden",
         }}>
-        <View
-          style={{
-            height: "100%",
-            width: `${Math.max(value == null ? 0 : 8, safe)}%`,
-            borderRadius: 1.5,
-            backgroundColor: value == null ? "#3A3040" : low ? "#FF7B93" : "#79E6A8",
-          }}
-        />
+        {fillWidth > 0 && (
+          <View
+            style={{
+              position: "absolute",
+              left: 1,
+              top: 1,
+              bottom: 1,
+              width: fillWidth,
+              borderRadius: 1.5,
+              backgroundColor: stroke,
+            }}
+          />
+        )}
       </View>
       <View
         style={{
@@ -69,7 +79,7 @@ function BatteryGlyph({value}: {value: number | null}) {
           height: 5,
           borderTopRightRadius: 2,
           borderBottomRightRadius: 2,
-          backgroundColor: value == null ? "#6F6279" : low ? "#FF7B93" : "#79E6A8",
+          backgroundColor: stroke,
           marginLeft: 1,
         }}
       />
@@ -360,14 +370,20 @@ export default function G2LabsHome() {
                   backgroundColor: "rgba(255,255,255,0.025)",
                   borderWidth: 1,
                   borderColor: "rgba(255,255,255,0.05)",
-                  paddingHorizontal: 10,
+                  paddingHorizontal: 8,
                   paddingVertical: 11,
+                  alignItems: "center",
+                  justifyContent: "center",
                 }}>
-                <View style={{flexDirection: "row", alignItems: "center", gap: 5}}>
+                <View style={{flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, width: "100%"}}>
                   {item.icon}
-                  <RNText style={{color: "#756981", fontSize: 9, fontWeight: "800"}}>{item.label}</RNText>
+                  <RNText style={{color: "#756981", fontSize: 9, fontWeight: "800", textAlign: "center"}}>{item.label}</RNText>
                 </View>
-                <RNText style={{color: "white", fontSize: 14, fontWeight: "800", marginTop: 5}}>
+                <RNText
+                  numberOfLines={2}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.72}
+                  style={{color: "white", fontSize: 14, fontWeight: "800", marginTop: 5, textAlign: "center", width: "100%"}}>
                   {item.value}
                 </RNText>
               </View>
