@@ -1132,7 +1132,17 @@ class STTModelManager {
       if (reasons) throw new Error(reasons)
     }
 
-    return deduped.slice(0, 80)
+    const rank = (model: RemoteCatalogModel) => {
+      if (model.downloadMode === "test" && model.compatibility === "native-likely") return 0
+      if (model.downloadMode === "test") return 1
+      if (model.runtime === "whisper.cpp") return 3
+      if (model.runtime === "vosk") return 4
+      return 2
+    }
+
+    return deduped
+      .sort((a, b) => rank(a) - rank(b) || a.displayName.localeCompare(b.displayName))
+      .slice(0, 80)
   }
 
   private async downloadDirectFiles(
