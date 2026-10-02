@@ -395,6 +395,11 @@ class LocalMiniappRuntime {
   /** Ref-counted stream subscriptions: stream → set of packageNames. */
   private streamSubscribers: Map<string, Set<string>> = new Map()
 
+  /** Host-owned route override used by the G2 on-glasses Captions menu.
+   *  This makes Cloud/Offline changes immediate even when the Captions
+   *  background JSContext survives stop/start and has stale settings in memory. */
+  private hostTranscriptionRouteOverrides = new Map<string, "cloud" | "forceLocal">()
+
   /** Host observers for the Mentra Live button-capture policy. */
   private buttonPressSubscriberListeners = new Set<(packageNames: string[]) => void>()
 
@@ -3564,6 +3569,12 @@ class LocalMiniappRuntime {
     await this.simpleStorage.set(packageName, key, value)
   }
 
+  public setMiniappTranscriptionRoute(packageName: string, route: "cloud" | "forceLocal" | null): void {
+    if (route == null) this.hostTranscriptionRouteOverrides.delete(packageName)
+    else this.hostTranscriptionRouteOverrides.set(packageName, route)
+    this.updateCloudSubscriptions()
+  }
+
   // ===========================================================================
   // Public subscribe helper
   // ===========================================================================
@@ -4014,6 +4025,9 @@ class LocalMiniappRuntime {
     forceLocal: boolean
   } {
     const app = this.connectedApps.get(packageName)
+    const override = this.hostTranscriptionRouteOverrides.get(packageName)
+    if (override === "cloud") return {cloud: true, forceLocal: false}
+    if (override === "forceLocal") return {cloud: false, forceLocal: true}
     return {
       cloud: app?.cloudTranscriptionStreams.has(stream) === true,
       forceLocal: app?.forceLocalTranscriptionStreams.has(stream) === true,
@@ -4028,6 +4042,9 @@ class LocalMiniappRuntime {
     forceLocal: boolean
   } {
     const app = this.connectedApps.get(packageName)
+    const override = this.hostTranscriptionRouteOverrides.get(packageName)
+    if (override === "cloud") return {cloud: true, forceLocal: false}
+    if (override === "forceLocal") return {cloud: false, forceLocal: true}
     const autoStream = `${MiniappStreamType.TRANSCRIPTION}:auto`
     return {
       cloud:
