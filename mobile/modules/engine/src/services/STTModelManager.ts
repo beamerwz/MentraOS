@@ -430,9 +430,19 @@ class STTModelManager {
     // Snapshot the model this process actually booted with before changing the
     // persisted selection. Deletion logic uses this to avoid unlinking a model
     // whose files are still mapped by the live recognizer.
-    await this.getProcessLoadedModelPath()
+    const loadedPath = await this.getProcessLoadedModelPath()
 
     if (Platform.OS === "ios") {
+      // Switching away from Whisper back to the Sherpa model that is ALREADY
+      // resident in this process must not force a fake relaunch. No ORT swap is
+      // happening here; we're simply re-selecting the recognizer that booted
+      // with the app and re-enabling its PCM route.
+      if (loadedPath === path) {
+        return "active"
+      }
+
+      // A genuinely different Sherpa model still needs the clean-launch guard;
+      // hot-swapping ORT/Sherpa on iOS is intentionally forbidden.
       const staged = await BluetoothSdk.stageSttModel(path, languageCode)
       if (!staged) throw new Error("Model could not be staged safely")
       return "staged-relaunch"
