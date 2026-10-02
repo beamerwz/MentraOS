@@ -7,6 +7,7 @@ import {useCallback, useEffect, useRef, useState, type ReactNode} from "react"
 import {ActivityIndicator, Pressable, ScrollView, Text as RNText, View} from "react-native"
 import {
   Activity,
+  BatteryCharging,
   Bluetooth,
   Captions,
   ChevronRight,
@@ -149,11 +150,18 @@ export default function G2LabsHome() {
     typeof glassesStatus.case?.battery === "number" && glassesStatus.case.battery >= 0
       ? glassesStatus.case.battery
       : null
+  const glassesCharging = glassesStatus.charging === true
+  const caseCharging = glassesStatus.case?.charging === true
   // G2 firmware reports the charging-case battery only when that telemetry is
   // actually present (typically around case/open/charging events). Never invent a
   // percentage; retain the last real sample and label it as LAST when live data stops.
   const displayedCaseBattery = caseBattery ?? lastKnownCaseBattery
   const caseBatteryIsCached = caseBattery == null && lastKnownCaseBattery != null
+  // The direct G2 BLE path currently gives us glasses battery/charge state but
+  // no decoded charging-case percentage. While the G2 is docked and charging,
+  // show that the case is actively charging the glasses instead of pretending
+  // its own percentage is known.
+  const caseIsActivelyChargingGlasses = caseBattery == null && glassesCharging
 
   const micLabel =
     preferredMic === "glasses"
@@ -355,14 +363,28 @@ export default function G2LabsHome() {
                 icon: <Bluetooth size={14} color={glassesConnected ? "#4ADE80" : "#806F90"} />,
               },
               {
-                label: "GLASSES",
+                label: glassesCharging ? "GLASSES · CHARGING" : "GLASSES",
                 value: battery === null ? "—" : `${battery}%`,
-                icon: <BatteryGlyph value={battery} />,
+                icon: glassesCharging
+                  ? <BatteryCharging size={18} color="#79E6A8" />
+                  : <BatteryGlyph value={battery} />,
               },
               {
-                label: caseBatteryIsCached ? "CASE · LAST" : "CASE",
-                value: displayedCaseBattery === null ? "Not reporting" : `${displayedCaseBattery}%`,
-                icon: <BatteryGlyph value={displayedCaseBattery} />,
+                label: caseCharging
+                  ? "CASE · CHARGING"
+                  : caseBatteryIsCached
+                    ? "CASE · LAST"
+                    : "CASE",
+                value:
+                  displayedCaseBattery !== null
+                    ? `${displayedCaseBattery}%`
+                    : caseIsActivelyChargingGlasses
+                      ? "Charging G2"
+                      : "Not reporting",
+                icon:
+                  caseCharging || caseIsActivelyChargingGlasses
+                    ? <BatteryCharging size={18} color="#79E6A8" />
+                    : <BatteryGlyph value={displayedCaseBattery} />,
               },
             ].map((item) => (
               <View
