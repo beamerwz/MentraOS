@@ -30,7 +30,6 @@ import {useAppStatusStore} from "../stores/apps"
 import {retirePendingSelectionOnPromotion} from "./PairingIdentity"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {asgCameraApi} from "./asg/asgCameraApi"
-import g2SpeechQuickMenu from "./G2SpeechQuickMenu"
 import {G2_SPEECH_MENU_PACKAGE} from "./G2SpeechQuickMenuConstants"
 
 let subs: Array<{remove: () => void}> = []
@@ -236,10 +235,6 @@ export function startDeviceEventRouter(): void {
   )
   subs.push(
     BluetoothSdk.addListener("touch_event", (event) => {
-      // While the on-glasses Captions engine submenu is open, its swipe/tap
-      // gestures are consumed here and never leak into a paused miniapp.
-      if (g2SpeechQuickMenu.handleTouch(event)) return
-
       if (process.env.EXPO_PUBLIC_G2_LABS === "1" && event.gestureName === "double_tap") {
         const captionsRunning =
           useAppStatusStore.getState().apps.find((app) => app.packageName === G2_CAPTIONS_PACKAGE)?.running === true
@@ -292,10 +287,11 @@ export function startDeviceEventRouter(): void {
       if (!packageName) return
 
       if (packageName === G2_SPEECH_MENU_PACKAGE) {
-        // The native dashboard item is named "Captions". Selecting it opens a
-        // second-level on-glasses engine chooser: Mentra Cloud, Sherpa, or
-        // ExecuTorch Whisper Tiny/Base/Small.
-        void g2SpeechQuickMenu.open()
+        // "Captions" on the native G2 dashboard is a true one-tap launcher.
+        // Use the same proven headless start/stop path as the phone instead of
+        // parking the glasses on a second-level "CAPTIONS" chooser screen.
+        // The current Cloud/Sherpa/Whisper choice remains the active route.
+        void toggleG2CaptionsFromGlasses()
         return
       }
 
