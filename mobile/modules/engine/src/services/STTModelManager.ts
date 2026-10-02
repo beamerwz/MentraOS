@@ -200,7 +200,7 @@ class STTModelManager {
       size: 682 * 1024 * 1024,
       type: "transducer",
       requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
-      languageCode: "it",
+      languageCode: "auto",
       experimental: true,
     },
     nemotron_it_160: {
@@ -212,7 +212,7 @@ class STTModelManager {
       size: 682 * 1024 * 1024,
       type: "transducer",
       requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
-      languageCode: "it",
+      languageCode: "auto",
       experimental: true,
     },
     nemotron_it_320: {
@@ -224,7 +224,7 @@ class STTModelManager {
       size: 682 * 1024 * 1024,
       type: "transducer",
       requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
-      languageCode: "it",
+      languageCode: "auto",
       experimental: true,
     },
     nemotron_it_560: {
@@ -236,7 +236,7 @@ class STTModelManager {
       size: 682 * 1024 * 1024,
       type: "transducer",
       requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
-      languageCode: "it",
+      languageCode: "auto",
       experimental: true,
     },
     nemotron_it_1120: {
@@ -248,7 +248,7 @@ class STTModelManager {
       size: 682 * 1024 * 1024,
       type: "transducer",
       requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
-      languageCode: "it",
+      languageCode: "auto",
       experimental: true,
     },
     zh: {
@@ -670,6 +670,18 @@ class STTModelManager {
     // Experimental Model Lab entries are intentionally excluded from the normal
     // Speech language picker. They remain addressable by code from G2 MODEL LAB.
     return Object.values(this.languages).filter((language) => !language.experimental)
+  }
+
+  /** Downloaded Sherpa presets exposed to the on-glasses Captions menu.
+   *  Unlike the normal phone language picker, this intentionally includes
+   *  experimental presets such as multilingual Nemotron 3.5 when they are
+   *  actually present and valid on disk. */
+  async getDownloadedLanguagesForQuickMenu(): Promise<LanguageConfig[]> {
+    const result: LanguageConfig[] = []
+    for (const language of Object.values(this.languages)) {
+      if (await this.isModelAvailable(language.code)) result.push(language)
+    }
+    return result
   }
 
   getModelDirectory(): string {
