@@ -201,6 +201,10 @@ class G2SpeechQuickMenu {
       CAPTIONS_OFFLINE_KEY,
       mode === "local" ? "true" : "false",
     )
+    localMiniappRuntime.setMiniappTranscriptionRoute(
+      CAPTIONS_PACKAGE,
+      mode === "local" ? "forceLocal" : "cloud",
+    )
   }
 
   private async persistOfflineEngine(engine: OfflineEngine): Promise<void> {
@@ -282,13 +286,18 @@ class G2SpeechQuickMenu {
     this.currentModelName = current.displayName
 
     const choices: ModelChoice[] = []
-    for (const config of sttModelManager.getAvailableLanguages()) {
+    for (const config of await sttModelManager.getDownloadedLanguagesForQuickMenu()) {
       try {
         if (!(await sttModelManager.isModelAvailable(config.code))) continue
         const path = sttModelManager.getModelPath(config.code)
         choices.push({
           key: `preset:${config.code}`,
-          label: config.code === "it" ? "Italian Built-in" : config.displayName,
+          label:
+            config.code.startsWith("nemotron_")
+              ? `${config.displayName} · MULTILINGUAL`
+              : config.code === "it"
+                ? "Italian Built-in"
+                : config.displayName,
           active: current.path === path || (!current.custom && current.code === config.code),
           code: config.code,
         })
