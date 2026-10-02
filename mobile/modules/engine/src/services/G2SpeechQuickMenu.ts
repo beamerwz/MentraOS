@@ -123,9 +123,14 @@ class G2SpeechQuickMenu {
       }
 
       const model = this.models[this.cursor]
-      this.statusLine = "Staging Sherpa model safely..."
+      this.statusLine = model.active ? "Starting Sherpa offline..." : "Preparing Sherpa model..."
       await this.render()
       try {
+        // Nemotron 3.5 is multilingual. Keep Captions itself on AUTO so a
+        // previously-selected English UI language cannot pin the local route.
+        if (model.key.includes("nemotron_")) {
+          await localMiniappRuntime.setMiniappStorageValue(CAPTIONS_PACKAGE, "language", "auto")
+        }
         const activation = model.code
           ? await sttModelManager.activateLanguage(model.code)
           : model.installed
@@ -216,11 +221,16 @@ class G2SpeechQuickMenu {
     this.active = false
     await Promise.resolve(BluetoothSdk.clearDisplay()).catch(() => undefined)
 
-    const store = useAppStatusStore.getState()
+    // open() may have just stopped Captions. Refresh first: the old object can
+    // still say running=true for a moment, which previously made this function
+    // skip start() and leave the glasses stuck on "Start captions".
+    await useAppStatusStore.getState().refresh()
+    let store = useAppStatusStore.getState()
     let app = store.apps.find((candidate) => candidate.packageName === CAPTIONS_PACKAGE)
     if (!app) {
       await store.refresh()
-      app = useAppStatusStore.getState().apps.find((candidate) => candidate.packageName === CAPTIONS_PACKAGE)
+      store = useAppStatusStore.getState()
+      app = store.apps.find((candidate) => candidate.packageName === CAPTIONS_PACKAGE)
     }
     if (!app) {
       this.active = true
@@ -229,7 +239,18 @@ class G2SpeechQuickMenu {
       return
     }
 
-    const ok = app.running ? true : await useAppStatusStore.getState().start(app, {skipNavigation: true})
+    // If a stale running flag survived the submenu stop, force a clean
+    // stop/refresh before starting. This also makes a route/model change take
+    // effect immediately in the Captions background controller.
+    if (app.running) {
+      await store.stop(CAPTIONS_PACKAGE).catch(() => undefined)
+      await new Promise<void>((resolve) => setTimeout(resolve, 120))
+      await useAppStatusStore.getState().refresh()
+      store = useAppStatusStore.getState()
+      app = store.apps.find((candidate) => candidate.packageName === CAPTIONS_PACKAGE) ?? app
+    }
+
+    const ok = await useAppStatusStore.getState().start(app, {skipNavigation: true})
     if (!ok) {
       this.active = true
       this.statusLine = "Could not start Captions"
