@@ -841,13 +841,13 @@ export default function G2ModelLab() {
           <View style={{paddingVertical: 12, borderTopWidth: 1, borderTopColor: "#241A2D"}}>
             <View style={{flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10}}>
               <RNText style={{color: "white", fontSize: 14, fontWeight: "900"}}>ExecuTorch · Whisper</RNText>
-              <RNText style={{color: "#6FE3A5", fontSize: 10, fontWeight: "900"}}>BUNDLED · TESTABLE</RNText>
+              <RNText style={{color: "#6FE3A5", fontSize: 10, fontWeight: "900"}}>BUILT IN · LIVE</RNText>
             </View>
             <RNText style={{color: "#756981", fontSize: 11, lineHeight: 16, marginTop: 4}}>
-              Native iOS multilingual Whisper Tiny / Base / Small. Test it directly against the G2 PCM stream without another IPA rebuild.
+              Production G2 Captions backend · native iOS multilingual Whisper Tiny / Base / Small via ExecuTorch.
             </RNText>
             <View style={{marginTop: 9, alignSelf: "flex-start"}}>
-              <ActionButton label="OPEN RUNTIME LAB" onPress={() => router.push("/runtime-lab")} />
+              <ActionButton label="OPEN BENCHMARK LAB" onPress={() => router.push("/runtime-lab")} />
             </View>
           </View>
 
